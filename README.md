@@ -1,6 +1,7 @@
 # 魔塔 · 网页版（30 层完整塔）
 
 [![verify](https://github.com/wyu55528/magic-tower-web/actions/workflows/verify.yml/badge.svg)](https://github.com/wyu55528/magic-tower-web/actions/workflows/verify.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 零构建、纯前端。**30 层塔**，最终魔王 **20 万血 / 2500 攻 / 800 防**，
 主角的武器和防具各分 **5 档**，数值是从魔王倒推出来的，
@@ -452,3 +453,21 @@ node tools/verify.js --emit   # 额外导出 tools/solution.json（通关路线�
 - 撞墙：不移动，也不出任何提示。
 - 存档：每次成功移动后自动写入 localStorage；阵亡时不会覆盖存档，
   所以"读取存档"可以回到阵亡前那一刻。
+
+## 拿去改着用
+
+**MIT 许可证**（见 [LICENSE](LICENSE)）：随便拿去改 —— 改关卡、改数值、改界面、改玩法都行，
+教学、写课程作业、或者自己往上加一层都可以。
+
+动手前先看两处：
+
+- **关卡只写字符**：每层地图是一张字符画，怪物、道具、门、楼梯都是字母，
+  数值全在图鉴表里。调平衡不用碰地图文件。
+- **规则层是纯函数**：`js/core/reducer.js` 里的 `step(state, action)` 是唯一改变世界的地方，
+  不碰 DOM。改完可以直接跑 `node tools/verify.js`，让求解器替你走一遍 30 层，
+  改坏了它会告诉你哪条断言挂了。
+
+改完源码想生成新的单文件版，跑一次 `node tools/build-single.mjs`，
+新的 `dist/魔塔-单文件版.html` 就是双击即玩的版本。
+
+CI 红了不是给你添堵 —— 那是求解器在告诉你这次改动把塔改坏了。
