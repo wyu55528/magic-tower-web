@@ -1,0 +1,378 @@
+:root {
+  --cell: min(38px, 4.6vw, 4.6vh);
+  /* 三种锁色：门和钥匙共用同一组色值，钥匙颜色 = 门颜色 */
+  --lock-yellow: #d8a13c;
+  --lock-blue: #3f7fd0;
+  --lock-red: #cf4438;
+  --bg: #0f1118;
+  --panel: #191d2b;
+  --panel-2: #212637;
+  --line: #2c3247;
+  --text: #e8eaf2;
+  --muted: #98a0b8;
+  --accent: #8aa4ff;
+  --good: #6ddc8f;
+  --warn: #ffb454;
+  --bad: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 50% -10%, #1b2033 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* 整页固定高度，地图和日志自己占位，玩的时候不会整页上下滚 */
+#app {
+  height: 100vh;
+  max-width: 1460px;
+  margin: 0 auto;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 14px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.topbar h1 { margin: 0; font-size: 18px; letter-spacing: 6px; color: var(--accent); white-space: nowrap; }
+.level-name { color: var(--muted); white-space: nowrap; }
+.topbar-actions { display: flex; gap: 6px; margin-left: auto; }
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: #fff; }
+
+/* ---- 顶栏状态芯片 ---- */
+.hud { display: flex; gap: 6px; flex-wrap: wrap; }
+.stat {
+  display: flex; align-items: baseline; gap: 5px;
+  padding: 2px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.stat-k { color: var(--muted); font-size: 12px; }
+.stat-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 238px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.panel-left section + section { margin-top: 10px; }
+.panel h2 {
+  margin: 0 0 5px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.panel-center { display: flex; flex-direction: column; overflow: hidden; }
+
+/* ---- 地图 ---- */
+.map { flex: 0 0 auto; display: flex; justify-content: center; }
+.board { display: grid; gap: 3px; }
+.tile {
+  width: var(--cell); height: var(--cell);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 0;
+  background: #242a3d;
+  position: relative;
+}
+.tile.wall { background: #0d0f16; box-shadow: inset 0 0 0 1px #1b1f2c; }
+.tile.door { background: #3a2f1d; }
+/* 门：整格实心的方块，和圆点图标的小怪一眼分得开 */
+.tile.door.lock-yellow { background: var(--lock-yellow); }
+.tile.door.lock-blue   { background: var(--lock-blue); }
+.tile.door.lock-red    { background: var(--lock-red); }
+.tile.door.lock-yellow, .tile.door.lock-blue, .tile.door.lock-red {
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, .45);
+}
+.tile.door.lock-yellow::after, .tile.door.lock-blue::after, .tile.door.lock-red::after {
+  content: ''; position: absolute; left: 4px; right: 4px; top: 50%;
+  height: 2px; margin-top: -1px; background: rgba(0, 0, 0, .35);
+}
+.tile.door.opened { background: #242a3d; box-shadow: none; }
+.tile.door.opened::after { content: none; }
+.tile.monster { background: #3a1f2a; }
+.tile.goal { background: #3c3320; }
+.tile.stair { background: #1f2f3a; }
+.tile.shop { background: #3a3520; }
+.tile.boss { background: #4a1f2a; }
+.icon { font-size: 23px; line-height: 1; }
+
+/* 钥匙：矢量钥匙形状，颜色直接取 --lock-*，和同色的门一一对应 */
+.key-svg { width: 1.15em; height: 1.15em; display: inline-block; vertical-align: -0.2em; }
+.key-svg.lock-yellow { color: var(--lock-yellow); }
+.key-svg.lock-blue   { color: var(--lock-blue); }
+.key-svg.lock-red    { color: var(--lock-red); }
+.tile .key-svg { width: 24px; height: 24px; vertical-align: 0; }
+.tile.stair .icon { font-size: 25px; font-weight: 700; color: #cfe4ff; }
+.player {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  animation: float 1.6s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* ---- 日志 ---- */
+.log {
+  flex: 1 1 auto;
+  min-height: 70px;
+  margin-top: 10px;
+  overflow-y: auto;
+  background: #12151f;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.log-line { padding: 1px 0; color: var(--muted); }
+.log-hit { color: #cfe0ff; }
+.log-hurt { color: var(--bad); }
+.log-kill, .log-win { color: var(--good); }
+.log-item { color: #ffd479; }
+.log-open { color: var(--accent); }
+.log-warn { color: var(--warn); }
+.log-death { color: var(--bad); }
+.log-level { color: #c9a6ff; }
+.log-heal { color: var(--good); }
+.log-info { color: var(--muted); }
+
+/* ---- 装备 / 钥匙 / 背包 ---- */
+.gear { display: flex; flex-direction: column; gap: 5px; }
+.gear-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border-radius: 7px; padding: 4px 9px;
+  font-size: 13px;
+}
+.gear-icon { font-size: 14px; }
+.gear-name { font-weight: 600; }
+.gear-dots { margin-left: auto; display: flex; gap: 3px; }
+.gear-dots .dot { width: 6px; height: 6px; border-radius: 50%; background: #39405a; }
+.gear-dots .dot.on { background: var(--accent); }
+
+.keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.key-item {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--panel-2); border-radius: 7px; padding: 3px 8px;
+  font-size: 12px;
+}
+.key-icon { display: inline-flex; align-items: center; }
+.key-icon .key-svg { width: 14px; height: 14px; }
+.key-name { color: var(--muted); }
+.key-count { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.bag { display: flex; flex-direction: column; gap: 5px; }
+.bag-item {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.bag-item:hover { border-color: var(--accent); }
+.slot { background: #2c3247; border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--muted); }
+.bag-count { margin-left: auto; color: var(--muted); }
+.empty { color: var(--muted); margin: 0; }
+
+/* ---- 操作说明（默认折叠）---- */
+.help-box { margin-top: 10px; }
+.help-box > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 1px;
+  list-style: none;
+  padding: 4px 0;
+  user-select: none;
+}
+.help-box > summary::-webkit-details-marker { display: none; }
+.help-box > summary::before { content: "▸ "; color: var(--accent); }
+.help-box[open] > summary::before { content: "▾ "; }
+.help { margin: 4px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+.help li { margin: 2px 0; }
+kbd {
+  background: #2c3247; border-radius: 4px; padding: 0 4px;
+  font-size: 11px; font-family: inherit; margin-right: 2px;
+}
+
+/* ---- 弹层 ---- */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(8, 10, 16, .78);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+.overlay[hidden] { display: none; }
+.overlay-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 28px;
+  text-align: center;
+  max-width: 400px;
+}
+.overlay-card h2 { margin: 0 0 10px; font-size: 21px; }
+.overlay-card p { color: var(--muted); margin: 0 0 14px; }
+.overlay-card button { margin: 0 5px; }
+
+.file-warning {
+  position: fixed; inset: 0;
+  background: rgba(8, 10, 16, .92);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.file-warning[hidden] { display: none; }
+.file-warning-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 26px;
+  max-width: 560px;
+}
+.file-warning-card pre {
+  background: #12151f; border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px;
+}
+code {
+  background: #12151f; border-radius: 4px; padding: 1px 6px;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+/* ---- 商店 ---- */
+.overlay-card.shop-card { min-width: 340px; }
+.shop-card .shop-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left;
+  margin-top: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.shop-card .shop-item:hover:not(:disabled) { border-color: var(--accent); }
+.shop-card .shop-item:disabled { opacity: .42; cursor: not-allowed; }
+.shop-name { font-weight: 600; }
+.shop-desc { color: var(--muted); font-size: 12px; }
+.shop-stock { color: var(--muted); font-size: 12px; }
+.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; }
+
+/* ---- 弹层里的退出按钮 ---- */
+.overlay-leave { margin-top: 12px; width: 100%; }
+
+/* ---- 怪物图鉴（只列当前层）---- */
+.overlay-card.book-card {
+  max-width: 560px;
+  width: min(94vw, 560px);
+  text-align: left;
+}
+.book-card h2 { text-align: center; }
+.book-desc { font-size: 13px; }
+.book-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 26px 0;
+}
+.book-scroll {
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #12151f;
+}
+.book-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.book-table th, .book-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  text-align: right;
+  white-space: nowrap;
+}
+.book-table thead th {
+  position: sticky;
+  top: 0;
+  background: #191d2b;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 1px;
+  z-index: 1;
+}
+.book-table td.book-name { text-align: left; font-weight: 600; }
+.book-table tr.book-here { background: rgba(138, 164, 255, .12); }
+.book-table td.vd-damage { color: var(--warn); }
+.book-table td.vd-nodamage { color: var(--good); }
+.book-table td.vd-unsolvable { color: var(--bad); font-weight: 600; }
+.book-card .overlay-leave { max-width: 260px; margin: 12px auto 0; display: block; }
+
+/* ---- 窄屏：侧栏收窄，但仍然保持两栏，整页照样不滚动 ---- */
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 176px minmax(0, 1fr); gap: 8px; }
+  .topbar { gap: 9px; padding: 6px 10px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 15px; letter-spacing: 3px; }
+  .hud { gap: 4px; }
+  .stat { padding: 1px 7px; }
+  .stat-k, .stat-v { font-size: 12px; }
+  .panel { padding: 8px 9px; }
+  .log { min-height: 54px; font-size: 12px; padding: 5px 8px; }
+  .keys { gap: 4px; }
+  .key-item { padding: 3px 5px; }
+}
+
+/* ---- 手机：太窄了才折成单列，允许整页滚动 ---- */
+@media (max-width: 560px) {
+  html, body { overflow: auto; }
+  #app { height: auto; }
+  .layout { grid-template-columns: 1fr; }
+  .panel { overflow: visible; }
+  .panel-center { overflow: visible; }
+  .log { height: 160px; flex: none; }
+}

@@ -1,0 +1,3088 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>魔塔 · 网页版 30 层（单文件版 · 双击即玩）</title>
+<style>
+:root {
+  --cell: min(38px, 4.6vw, 4.6vh);
+  /* 三种锁色：门和钥匙共用同一组色值，钥匙颜色 = 门颜色 */
+  --lock-yellow: #d8a13c;
+  --lock-blue: #3f7fd0;
+  --lock-red: #cf4438;
+  --bg: #0f1118;
+  --panel: #191d2b;
+  --panel-2: #212637;
+  --line: #2c3247;
+  --text: #e8eaf2;
+  --muted: #98a0b8;
+  --accent: #8aa4ff;
+  --good: #6ddc8f;
+  --warn: #ffb454;
+  --bad: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 50% -10%, #1b2033 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* 整页固定高度，地图和日志自己占位，玩的时候不会整页上下滚 */
+#app {
+  height: 100vh;
+  max-width: 1460px;
+  margin: 0 auto;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 14px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.topbar h1 { margin: 0; font-size: 18px; letter-spacing: 6px; color: var(--accent); white-space: nowrap; }
+.level-name { color: var(--muted); white-space: nowrap; }
+.topbar-actions { display: flex; gap: 6px; margin-left: auto; }
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: #fff; }
+
+/* ---- 顶栏状态芯片 ---- */
+.hud { display: flex; gap: 6px; flex-wrap: wrap; }
+.stat {
+  display: flex; align-items: baseline; gap: 5px;
+  padding: 2px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.stat-k { color: var(--muted); font-size: 12px; }
+.stat-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 238px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.panel-left section + section { margin-top: 10px; }
+.panel h2 {
+  margin: 0 0 5px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.panel-center { display: flex; flex-direction: column; overflow: hidden; }
+
+/* ---- 地图 ---- */
+.map { flex: 0 0 auto; display: flex; justify-content: center; }
+.board { display: grid; gap: 3px; }
+.tile {
+  width: var(--cell); height: var(--cell);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 0;
+  background: #242a3d;
+  position: relative;
+}
+.tile.wall { background: #0d0f16; box-shadow: inset 0 0 0 1px #1b1f2c; }
+.tile.door { background: #3a2f1d; }
+/* 门：整格实心的方块，和圆点图标的小怪一眼分得开 */
+.tile.door.lock-yellow { background: var(--lock-yellow); }
+.tile.door.lock-blue   { background: var(--lock-blue); }
+.tile.door.lock-red    { background: var(--lock-red); }
+.tile.door.lock-yellow, .tile.door.lock-blue, .tile.door.lock-red {
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, .45);
+}
+.tile.door.lock-yellow::after, .tile.door.lock-blue::after, .tile.door.lock-red::after {
+  content: ''; position: absolute; left: 4px; right: 4px; top: 50%;
+  height: 2px; margin-top: -1px; background: rgba(0, 0, 0, .35);
+}
+.tile.door.opened { background: #242a3d; box-shadow: none; }
+.tile.door.opened::after { content: none; }
+.tile.monster { background: #3a1f2a; }
+.tile.goal { background: #3c3320; }
+.tile.stair { background: #1f2f3a; }
+.tile.shop { background: #3a3520; }
+.tile.boss { background: #4a1f2a; }
+.icon { font-size: 23px; line-height: 1; }
+
+/* 钥匙：矢量钥匙形状，颜色直接取 --lock-*，和同色的门一一对应 */
+.key-svg { width: 1.15em; height: 1.15em; display: inline-block; vertical-align: -0.2em; }
+.key-svg.lock-yellow { color: var(--lock-yellow); }
+.key-svg.lock-blue   { color: var(--lock-blue); }
+.key-svg.lock-red    { color: var(--lock-red); }
+.tile .key-svg { width: 24px; height: 24px; vertical-align: 0; }
+.tile.stair .icon { font-size: 25px; font-weight: 700; color: #cfe4ff; }
+.player {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  animation: float 1.6s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* ---- 日志 ---- */
+.log {
+  flex: 1 1 auto;
+  min-height: 70px;
+  margin-top: 10px;
+  overflow-y: auto;
+  background: #12151f;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.log-line { padding: 1px 0; color: var(--muted); }
+.log-hit { color: #cfe0ff; }
+.log-hurt { color: var(--bad); }
+.log-kill, .log-win { color: var(--good); }
+.log-item { color: #ffd479; }
+.log-open { color: var(--accent); }
+.log-warn { color: var(--warn); }
+.log-death { color: var(--bad); }
+.log-level { color: #c9a6ff; }
+.log-heal { color: var(--good); }
+.log-info { color: var(--muted); }
+
+/* ---- 装备 / 钥匙 / 背包 ---- */
+.gear { display: flex; flex-direction: column; gap: 5px; }
+.gear-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border-radius: 7px; padding: 4px 9px;
+  font-size: 13px;
+}
+.gear-icon { font-size: 14px; }
+.gear-name { font-weight: 600; }
+.gear-dots { margin-left: auto; display: flex; gap: 3px; }
+.gear-dots .dot { width: 6px; height: 6px; border-radius: 50%; background: #39405a; }
+.gear-dots .dot.on { background: var(--accent); }
+
+.keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.key-item {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--panel-2); border-radius: 7px; padding: 3px 8px;
+  font-size: 12px;
+}
+.key-icon { display: inline-flex; align-items: center; }
+.key-icon .key-svg { width: 14px; height: 14px; }
+.key-name { color: var(--muted); }
+.key-count { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.bag { display: flex; flex-direction: column; gap: 5px; }
+.bag-item {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.bag-item:hover { border-color: var(--accent); }
+.slot { background: #2c3247; border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--muted); }
+.bag-count { margin-left: auto; color: var(--muted); }
+.empty { color: var(--muted); margin: 0; }
+
+/* ---- 操作说明（默认折叠）---- */
+.help-box { margin-top: 10px; }
+.help-box > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 1px;
+  list-style: none;
+  padding: 4px 0;
+  user-select: none;
+}
+.help-box > summary::-webkit-details-marker { display: none; }
+.help-box > summary::before { content: "▸ "; color: var(--accent); }
+.help-box[open] > summary::before { content: "▾ "; }
+.help { margin: 4px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+.help li { margin: 2px 0; }
+kbd {
+  background: #2c3247; border-radius: 4px; padding: 0 4px;
+  font-size: 11px; font-family: inherit; margin-right: 2px;
+}
+
+/* ---- 弹层 ---- */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(8, 10, 16, .78);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+.overlay[hidden] { display: none; }
+.overlay-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 28px;
+  text-align: center;
+  max-width: 400px;
+}
+.overlay-card h2 { margin: 0 0 10px; font-size: 21px; }
+.overlay-card p { color: var(--muted); margin: 0 0 14px; }
+.overlay-card button { margin: 0 5px; }
+
+.file-warning {
+  position: fixed; inset: 0;
+  background: rgba(8, 10, 16, .92);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.file-warning[hidden] { display: none; }
+.file-warning-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 26px;
+  max-width: 560px;
+}
+.file-warning-card pre {
+  background: #12151f; border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px;
+}
+code {
+  background: #12151f; border-radius: 4px; padding: 1px 6px;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+/* ---- 商店 ---- */
+.overlay-card.shop-card { min-width: 340px; }
+.shop-card .shop-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left;
+  margin-top: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.shop-card .shop-item:hover:not(:disabled) { border-color: var(--accent); }
+.shop-card .shop-item:disabled { opacity: .42; cursor: not-allowed; }
+.shop-name { font-weight: 600; }
+.shop-desc { color: var(--muted); font-size: 12px; }
+.shop-stock { color: var(--muted); font-size: 12px; }
+.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; }
+
+/* ---- 弹层里的退出按钮 ---- */
+.overlay-leave { margin-top: 12px; width: 100%; }
+
+/* ---- 怪物图鉴（只列当前层）---- */
+.overlay-card.book-card {
+  max-width: 560px;
+  width: min(94vw, 560px);
+  text-align: left;
+}
+.book-card h2 { text-align: center; }
+.book-desc { font-size: 13px; }
+.book-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 26px 0;
+}
+.book-scroll {
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #12151f;
+}
+.book-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.book-table th, .book-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  text-align: right;
+  white-space: nowrap;
+}
+.book-table thead th {
+  position: sticky;
+  top: 0;
+  background: #191d2b;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 1px;
+  z-index: 1;
+}
+.book-table td.book-name { text-align: left; font-weight: 600; }
+.book-table tr.book-here { background: rgba(138, 164, 255, .12); }
+.book-table td.vd-damage { color: var(--warn); }
+.book-table td.vd-nodamage { color: var(--good); }
+.book-table td.vd-unsolvable { color: var(--bad); font-weight: 600; }
+.book-card .overlay-leave { max-width: 260px; margin: 12px auto 0; display: block; }
+
+/* ---- 窄屏：侧栏收窄，但仍然保持两栏，整页照样不滚动 ---- */
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 176px minmax(0, 1fr); gap: 8px; }
+  .topbar { gap: 9px; padding: 6px 10px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 15px; letter-spacing: 3px; }
+  .hud { gap: 4px; }
+  .stat { padding: 1px 7px; }
+  .stat-k, .stat-v { font-size: 12px; }
+  .panel { padding: 8px 9px; }
+  .log { min-height: 54px; font-size: 12px; padding: 5px 8px; }
+  .keys { gap: 4px; }
+  .key-item { padding: 3px 5px; }
+}
+
+/* ---- 手机：太窄了才折成单列，允许整页滚动 ---- */
+@media (max-width: 560px) {
+  html, body { overflow: auto; }
+  #app { height: auto; }
+  .layout { grid-template-columns: 1fr; }
+  .panel { overflow: visible; }
+  .panel-center { overflow: visible; }
+  .log { height: 160px; flex: none; }
+}
+
+</style>
+<script>
+  // 兜底提示。
+  //
+  // 本项目用了 ES Module，浏览器会拦截 file:// 下的模块请求，
+  // 那种情况下模块根本没加载，页面是空的 —— 这时候才需要提示用户改用服务器。
+  //
+  // 所以这里不看协议，而是看游戏有没有真的启动（js/main.js 跑完会置 __gameBooted）。
+  // 早先按 file:// 协议直接弹卡，结果在本来就能正常加载模块的浏览器里
+  // 反而把已经跑起来的游戏整个挡住了。
+  function showFileWarning() {
+    if (window.__gameBooted) return;
+    var w = document.getElementById('file-warning');
+    if (w) w.hidden = false;
+  }
+  function bindClose() {
+    var btn = document.getElementById('file-warning-close');
+    if (btn) btn.addEventListener('click', function () {
+      var w = document.getElementById('file-warning');
+      if (w) w.hidden = true;
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+      bindClose();
+      setTimeout(showFileWarning, 200);
+    });
+  } else {
+    bindClose();
+    setTimeout(showFileWarning, 200);
+  }
+</script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <h1>魔塔</h1>
+    <div class="level-name" id="level-name">—</div>
+    <div id="hud" class="hud"></div>
+    <div class="topbar-actions">
+      <button id="btn-save" type="button">保存</button>
+      <button id="btn-load" type="button">读取</button>
+      <button id="btn-reset" type="button">重开</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel panel-left">
+      <section>
+        <h2>装备</h2>
+        <div id="gear" class="gear"></div>
+      </section>
+      <section>
+        <h2>钥匙</h2>
+        <div id="keys" class="keys"></div>
+      </section>
+      <section>
+        <h2>背包</h2>
+        <div id="bag" class="bag"></div>
+      </section>
+      <details class="help-box">
+        <summary>操作说明</summary>
+        <ul class="help">
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 或方向键移动</li>
+          <li><kbd>1</kbd>–<kbd>9</kbd> 使用对应道具</li>
+          <li>背包第 10 件起：输两位数再按 <kbd>回车</kbd></li>
+          <li><kbd>B</kbd> 打开怪物图鉴（第 1 层出口捡到）</li>
+          <li><kbd>U</kbd> 撤销一步</li>
+          <li>踩到怪物自动开战，踩到门自动扣钥匙</li>
+          <li>捡到生命结晶：生命上限抬高，血量当场回满</li>
+          <li>塔里没有药水，也没有商店</li>
+          <li>钥匙分黄 / 蓝 / 红三色，和同色的门配对；门是整格实心的方块</li>
+          <li>剑和盾各 5 档，只认最高的那把</li>
+          <li>第 15 层能捡到 📜 传送卷轴：在楼梯旁边按 <kbd>↑</kbd><kbd>↓</kbd> 上下楼</li>
+        </ul>
+      </details>
+    </aside>
+
+    <section class="panel panel-center">
+      <div id="map" class="map"></div>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <div id="overlay" class="overlay" hidden></div>
+</div>
+
+<div id="file-warning" class="file-warning" hidden>
+  <div class="file-warning-card">
+    <h2>请用本地服务器打开</h2>
+    <p>这个版本用了 ES Module，浏览器会拦截 <code>file://</code> 下的模块请求，所以直接双击 <code>index.html</code> 会是空白页。</p>
+    <p>两种办法，任选一个：</p>
+    <p><b>① 不用装任何东西</b>：双击 <code>dist\魔塔-单文件版.html</code>，那个版本把所有代码都打包进了一个文件，双击直接能玩。</p>
+    <p><b>② 用本地服务器</b>：在项目目录里双击 <code>start.bat</code>（需要已安装 Python 3）；或者手动执行：</p>
+    <pre>python -m http.server 8000</pre>
+    <p>然后访问 <code>http://localhost:8000</code>。</p>
+    <button type="button" id="file-warning-close">知道了</button>
+  </div>
+</div>
+
+<script>
+// ===== js/data/tiles.js =====
+/**
+ * 地图字符 -> 格子对象 的全局对照表（默认图例）。
+ * 每层可以用 legend 覆盖某个字符的 id，这样同一个 's' 在不同层代表不同的剑。
+ */
+const TILE_CHARS = {
+  '#': { t: 'wall' },
+  '.': { t: 'floor' },
+  '@': { t: 'start' },
+  '>': { t: 'stairUp' },     // ↑ 往上爬：通到上面一层（层号 +1）
+  '<': { t: 'stairDown' },   // ↓ 往下走：回到下面一层（层号 -1）
+  'X': { t: 'boss', id: 'demon_king' },
+
+  'y': { t: 'item', id: 'key_yellow' },
+  'b': { t: 'item', id: 'key_blue' },
+  'r': { t: 'item', id: 'key_red' },
+  's': { t: 'item', id: 'sword_iron' },
+  't': { t: 'item', id: 'shield_wood' },
+  'h': { t: 'item', id: 'life_crystal' },
+  '$': { t: 'gold', value: 20 },   // 大金币
+  '%': { t: 'gold', value: 15 },   // 中金币
+  '&': { t: 'gold', value: 10 },   // 小金币
+
+  'd': { t: 'door', lock: 'yellow' },
+  'D': { t: 'door', lock: 'blue' },
+  'R': { t: 'door', lock: 'red' },
+
+  'S': { t: 'shop' },
+  'W': { t: 'item', id: 'warp_scroll' },    // 传送卷轴（第 15 层）
+  'B': { t: 'item', id: 'monster_book' },   // 怪物图鉴（第 1 层出口）
+
+  'G': { t: 'monster', id: 'guard_1' },   // 守关怪（每层 1 只）
+  'g': { t: 'monster', id: 'imp_1' },   // 小怪：小鬼（每层 1 只，legend 指定具体楼层）
+  'k': { t: 'monster', id: 'spr_1' },   // 小怪：史莱姆（每层 1 只，legend 指定具体楼层）
+  'v': { t: 'monster', id: 'patrol_1' },   // 巡逻怪：站在通路上拦路（legend 指定具体楼层）
+};
+
+const LOCK_NAMES = { yellow: '黄钥匙', blue: '蓝钥匙', red: '红钥匙' };
+
+// ===== js/data/levels.js =====
+/**
+ * 30 层塔的关卡地图。
+ *
+ * 地图字符：每行固定 11 个字符，第 0 行和最后一行是外墙。
+ *   #  墙        .  空地      @  出生点     > 往上   < 往下   X 魔王
+ *   y/b/r  黄/蓝/红钥匙        $/% 大中金币  & 小金币
+ *   d/D/R  黄/蓝/红门          W 传送卷轴
+ *   G  本层守关怪   g/k 本层两只小怪   B 怪物图鉴
+ *   s 剑  t 盾  h 生命结晶（每层由 legend 指定具体档位与数值）
+ *
+ * legend：每层覆盖全局字符表，所以同一个 s 在不同层代表不同的剑。
+ *
+ * 关卡形状：每层一张 11×11 的地图，一格宽的走廊迷宫，没有开阔地。
+ *   奇数坐标是房间，房间之间隔一格走廊；偶数坐标是实心柱子，
+ *   所以任何 2×2 的方块里必定有一格墙 —— 整张图不存在 2×2 的空地，
+ *   走起来永远是一格宽的通道。墙占 59.5%，空地 49 格。
+ *   走廊末端是死胡同（一格房间 + 一格走廊口），奖励都藏在死胡同里，
+ *   所以绕路一定有收获，不会白走。
+ *
+ * 结构约定（由 tools/verify.js 逐层强制）：
+ *   守关怪站在某个死胡同的走廊口上，能开本层门的钥匙就在它身后那个死胡同里；
+ *   门同样站在走廊口上，往上爬的楼梯在门后面的死胡同里（末层是魔王）。
+ *   于是：挡住所有怪就拿不到开门的钥匙；封死所有门就到不了楼梯。
+ *   本层门的钥匙全层只有一把，其余钥匙是下一层门的备用钥匙。
+ *
+ * 怪物图鉴书：第 1 层出口（通往第 2 层那扇门的外侧）有一本，捡进背包后按 B 打开。
+ *
+ * 传送卷轴：第 15 层有一个，捡进背包后按 ↑ / ↓ 可以在楼梯旁边上下楼。
+ *
+ * 地图由 tools/gen-levels.mjs 生成（关卡方案写在那里，地图按方案刻出来）。
+ */
+
+const LEVELS = [
+/* ==== LEVELS:BEGIN ==== */
+  {
+    id: 1,
+    name: "第 1 层 · 庭院",
+    legend: {
+          G: "guard_1",
+          g: "imp_1",
+          k: "spr_1",
+          v: "patrol_1",
+          s: "sword_iron",
+          h: { id: "life_crystal", maxHp: 600 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#bk.#&..#>#',
+      '###v#%#.#d#',
+      '#$#...#..B#',
+      '#.#######.#',
+      '#.....Gy#.#',
+      '#v###.###.#',
+      '#.#s#.#...#',
+      '#@#.#.#.###',
+      '#...#...gh#',
+      '###########',
+    ],
+  },
+  {
+    id: 2,
+    name: "第 2 层 · 石阶",
+    legend: {
+          G: "guard_2",
+          g: "imp_2",
+          k: "spr_2",
+          v: "patrol_2",
+          h: { id: "life_crystal", maxHp: 700 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#h#b#.%...#',
+      '#g#G#.###.#',
+      '#.#.v.kr#.#',
+      '#v#.#####.#',
+      '#.#<#.....#',
+      '#.###.###.#',
+      '#...#...#.#',
+      '###.###.#.#',
+      '#>D&...$#%#',
+      '###########',
+    ],
+  },
+  {
+    id: 3,
+    name: "第 3 层 · 钟楼",
+    legend: {
+          G: "guard_3",
+          g: "imp_3",
+          k: "spr_3",
+          v: "patrol_3",
+          h: { id: "life_crystal", maxHp: 800 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#rG.#...#y#',
+      '###v#.#.#k#',
+      '#h#.#.#...#',
+      '#g#.#.###.#',
+      '#...#..&#.#',
+      '#.###.#.#v#',
+      '#..%#%#.#.#',
+      '###.###.#.#',
+      '#>R...$.#<#',
+      '###########',
+    ],
+  },
+  {
+    id: 4,
+    name: "第 4 层 · 画廊",
+    legend: {
+          G: "guard_4",
+          g: "imp_4",
+          k: "spr_4",
+          v: "patrol_4",
+          t: "shield_wood",
+          h: { id: "life_crystal", maxHp: 900 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#t#yG...d>#',
+      '#.###v#.###',
+      '#...#.#.%$#',
+      '###.#k###.#',
+      '#<#&#b#...#',
+      '#.#.###.#.#',
+      '#...#...#.#',
+      '#v###.###.#',
+      '#.....#hg.#',
+      '###########',
+    ],
+  },
+  {
+    id: 5,
+    name: "第 5 层 · 密道",
+    legend: {
+          G: "guard_5",
+          g: "imp_5",
+          k: "spr_5",
+          v: "patrol_5",
+          h: { id: "life_crystal", maxHp: 1000 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#bG.#%....#',
+      '###v#####.#',
+      '#<#..&..#.#',
+      '#.#####%#.#',
+      '#...D>#...#',
+      '#v#.#####.#',
+      '#.#.#....$#',
+      '#g#.#.#####',
+      '#h#.....kr#',
+      '###########',
+    ],
+  },
+  {
+    id: 6,
+    name: "第 6 层 · 熔炉",
+    legend: {
+          G: "guard_6",
+          g: "imp_6",
+          k: "spr_6",
+          v: "patrol_6",
+          h: { id: "life_crystal", maxHp: 1100 },
+          "$": { value: 52 },
+          "%": { value: 24 },
+          "&": { value: 16 },
+    },
+    rows: [
+      '###########',
+      '#$#.....kS#',
+      '#.#.###.###',
+      '#.#...#%&.#',
+      '#y###v###.#',
+      '#.#>R.gh#.#',
+      '#.###G###.#',
+      '#...#r#...#',
+      '###v###.#.#',
+      '#<......#%#',
+      '###########',
+    ],
+  },
+  {
+    id: 7,
+    name: "第 7 层 · 冰窟",
+    legend: {
+          G: "guard_7",
+          g: "imp_7",
+          k: "spr_7",
+          v: "patrol_7",
+          s: "sword_bronze",
+          h: { id: "life_crystal", maxHp: 1200 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#yG.v...#h#',
+      '#######.#g#',
+      '#>d...#...#',
+      '#####.###&#',
+      '#...v..<#.#',
+      '#.###.###.#',
+      '#.#s..#...#',
+      '#.#####.###',
+      '#%...$..kb#',
+      '###########',
+    ],
+  },
+  {
+    id: 8,
+    name: "第 8 层 · 暗殿",
+    legend: {
+          G: "guard_8",
+          g: "imp_8",
+          k: "spr_8",
+          v: "patrol_8",
+          h: { id: "life_crystal", maxHp: 1300 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#>#rk.....#',
+      '#D###.#.#v#',
+      '#...#%#.#.#',
+      '###.###.#g#',
+      '#b#...#.#h#',
+      '#G###&#.###',
+      '#.v.#.#..%#',
+      '#.#.#.###.#',
+      '#<#$......#',
+      '###########',
+    ],
+  },
+  {
+    id: 9,
+    name: "第 9 层 · 王座前",
+    legend: {
+          G: "guard_9",
+          g: "imp_9",
+          k: "spr_9",
+          v: "patrol_9",
+          h: { id: "life_crystal", maxHp: 1400 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#%#%....#>#',
+      '#.#g#.#.#R#',
+      '#.#h#.#...#',
+      '#&###.###.#',
+      '#...#...#.#',
+      '###$#G#.#v#',
+      '#<#.#r#.#.#',
+      '#.#.###.#k#',
+      '#.v.....#y#',
+      '###########',
+    ],
+  },
+  {
+    id: 10,
+    name: "第 10 层 · 熔火王座",
+    legend: {
+          G: "guard_10",
+          g: "imp_10",
+          k: "spr_10",
+          v: "patrol_10",
+          t: "shield_iron",
+          h: { id: "life_crystal", maxHp: 1500 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#y#>d$..#S#',
+      '#G###.#.#k#',
+      '#.#...#...#',
+      '#v#.#####.#',
+      '#...#<#...#',
+      '#####.#.###',
+      '#...#.%b#t#',
+      '#g#.#v###.#',
+      '#h#....&..#',
+      '###########',
+    ],
+  },
+  {
+    id: 11,
+    name: "第 11 层 · 荒骨荒原",
+    legend: {
+          G: "guard_11",
+          g: "imp_11",
+          k: "spr_11",
+          v: "patrol_11",
+          h: { id: "life_crystal", maxHp: 1600 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#hg.#>D.v.#',
+      '###v###.#.#',
+      '#%#.#...#<#',
+      '#.#%#.#####',
+      '#...#...$.#',
+      '#.###.###.#',
+      '#...#.Gb#.#',
+      '###.#####.#',
+      '#rk.&.....#',
+      '###########',
+    ],
+  },
+  {
+    id: 12,
+    name: "第 12 层 · 暗河",
+    legend: {
+          G: "guard_12",
+          g: "imp_12",
+          k: "spr_12",
+          v: "patrol_12",
+          h: { id: "life_crystal", maxHp: 1700 },
+          "$": { value: 130 },
+          "%": { value: 60 },
+          "&": { value: 40 },
+    },
+    rows: [
+      '###########',
+      '#%#h#.....#',
+      '#.#g#.###.#',
+      '#.#.v..<#.#',
+      '#v#R#####.#',
+      '#.#>#&$...#',
+      '#.###.###.#',
+      '#.%...#...#',
+      '#######.###',
+      '#yk.....Gr#',
+      '###########',
+    ],
+  },
+  {
+    id: 13,
+    name: "第 13 层 · 霜牙巢穴",
+    legend: {
+          G: "guard_13",
+          g: "imp_13",
+          k: "spr_13",
+          v: "patrol_13",
+          s: "sword_silver",
+          h: { id: "life_crystal", maxHp: 1800 },
+          "$": { value: 247 },
+          "%": { value: 114 },
+          "&": { value: 76 },
+    },
+    rows: [
+      '###########',
+      '#>#bk...#h#',
+      '#d###.#.#g#',
+      '#...v.#.#.#',
+      '#######.#.#',
+      '#.v..<#...#',
+      '#.#%#####.#',
+      '#.#....s#.#',
+      '#.###.###&#',
+      '#.Gy#...$.#',
+      '###########',
+    ],
+  },
+  {
+    id: 14,
+    name: "第 14 层 · 幽冥回廊",
+    legend: {
+          G: "guard_14",
+          g: "imp_14",
+          k: "spr_14",
+          v: "patrol_14",
+          h: { id: "life_crystal", maxHp: 1900 },
+          "$": { value: 247 },
+          "%": { value: 114 },
+          "&": { value: 76 },
+    },
+    rows: [
+      '###########',
+      '#b#<..v...#',
+      '#G#####k#r#',
+      '#.....#S#.#',
+      '#####.###.#',
+      '#%..#.....#',
+      '###v#####.#',
+      '#...gh#...#',
+      '#.#####.###',
+      '#%.&...$D>#',
+      '###########',
+    ],
+  },
+  {
+    id: 15,
+    name: "第 15 层 · 血月祭坛",
+    legend: {
+          G: "guard_15",
+          g: "imp_15",
+          k: "spr_15",
+          v: "patrol_15",
+          t: "shield_silver",
+          h: { id: "life_crystal", maxHp: 2000 },
+          "$": { value: 247 },
+          "%": { value: 114 },
+          "&": { value: 76 },
+    },
+    rows: [
+      '###########',
+      '#rG.v...#h#',
+      '#######$#g#',
+      '#<....#.#%#',
+      '###v#R#.#.#',
+      '#...#>#.&.#',
+      '#.#k#####y#',
+      '#.#W#.....#',
+      '#.###.#####',
+      '#........t#',
+      '###########',
+    ],
+  },
+  {
+    id: 16,
+    name: "第 16 层 · 机械圣所",
+    legend: {
+          G: "guard_16",
+          g: "imp_16",
+          k: "spr_16",
+          v: "patrol_16",
+          h: { id: "life_crystal", maxHp: 2100 },
+          "$": { value: 247 },
+          "%": { value: 114 },
+          "&": { value: 76 },
+    },
+    rows: [
+      '###########',
+      '#<..v...#b#',
+      '#######.#k#',
+      '#$...%#...#',
+      '#.#.#.###.#',
+      '#.#.#.Gy#.#',
+      '#v#.#g###.#',
+      '#.#.#h#&..#',
+      '#.#.###.###',
+      '#%#.v...d>#',
+      '###########',
+    ],
+  },
+  {
+    id: 17,
+    name: "第 17 层 · 万骨魔殿",
+    legend: {
+          G: "guard_17",
+          g: "imp_17",
+          k: "spr_17",
+          v: "patrol_17",
+          s: "sword_gold",
+          h: { id: "life_crystal", maxHp: 2200 },
+          "$": { value: 390 },
+          "%": { value: 180 },
+          "&": { value: 120 },
+    },
+    rows: [
+      '###########',
+      '#s#rk...v.#',
+      '#.###.#.#.#',
+      '#.v.#.#.#<#',
+      '###.#g#.###',
+      '#...#h#..%#',
+      '#.#####G#.#',
+      '#...&.#b#.#',
+      '#####.###.#',
+      '#>D...v..$#',
+      '###########',
+    ],
+  },
+  {
+    id: 18,
+    name: "第 18 层 · 虚空裂隙",
+    legend: {
+          G: "guard_18",
+          g: "imp_18",
+          k: "spr_18",
+          v: "patrol_18",
+          h: { id: "life_crystal", maxHp: 2300 },
+          "$": { value: 390 },
+          "%": { value: 180 },
+          "&": { value: 120 },
+    },
+    rows: [
+      '###########',
+      '#$..#Sk...#',
+      '###v###.#.#',
+      '#r#&..#%#.#',
+      '#G###.###.#',
+      '#.R>#..y..#',
+      '#.#######v#',
+      '#.%...#...#',
+      '#v###.#.###',
+      '#..<#...gh#',
+      '###########',
+    ],
+  },
+  {
+    id: 19,
+    name: "第 19 层 · 魔王前庭",
+    legend: {
+          G: "guard_19",
+          g: "imp_19",
+          k: "spr_19",
+          v: "patrol_19",
+          t: "shield_gold",
+          h: { id: "life_crystal", maxHp: 2400 },
+          "$": { value: 390 },
+          "%": { value: 180 },
+          "&": { value: 120 },
+    },
+    rows: [
+      '###########',
+      '#bk.v....&#',
+      '#########.#',
+      '#.....#>#.#',
+      '#.###v#d#.#',
+      '#.#t..$.#.#',
+      '#%###.###.#',
+      '#...#<#...#',
+      '#G#.###.###',
+      '#y#...v.gh#',
+      '###########',
+    ],
+  },
+  {
+    id: 20,
+    name: "第 20 层 · 终焉回廊",
+    legend: {
+          G: "guard_20",
+          g: "imp_20",
+          k: "spr_20",
+          v: "patrol_20",
+          h: { id: "life_crystal", maxHp: 2500 },
+          "$": { value: 390 },
+          "%": { value: 180 },
+          "&": { value: 120 },
+    },
+    rows: [
+      '###########',
+      '#h#>D.....#',
+      '#g###$###.#',
+      '#.v...#<#.#',
+      '#######.#%#',
+      '#..%#.v.#.#',
+      '#.###.#.#.#',
+      '#...#.#...#',
+      '#G#v#.#####',
+      '#b#&....kr#',
+      '###########',
+    ],
+  },
+  {
+    id: 21,
+    name: "第 21 层 · 灰烬阶梯",
+    legend: {
+          G: "guard_21",
+          g: "imp_21",
+          k: "spr_21",
+          v: "patrol_21",
+          h: { id: "life_crystal", maxHp: 2600 },
+          "$": { value: 390 },
+          "%": { value: 180 },
+          "&": { value: 120 },
+    },
+    rows: [
+      '###########',
+      '#yk.#rG.v.#',
+      '###.#####.#',
+      '#<#.....#.#',
+      '#.#####.#.#',
+      '#..%#...#.#',
+      '#v###%###.#',
+      '#...#.#.v.#',
+      '#g#&#.#.#R#',
+      '#h#.$...#>#',
+      '###########',
+    ],
+  },
+  {
+    id: 22,
+    name: "第 22 层 · 逆时之庭",
+    legend: {
+          G: "guard_22",
+          g: "imp_22",
+          k: "spr_22",
+          v: "patrol_22",
+          s: "sword_diamond",
+          h: { id: "life_crystal", maxHp: 2700 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#y#...&.kS#',
+      '#G#v###.###',
+      '#b#..<#.$.#',
+      '#v#####g#.#',
+      '#.....#h#.#',
+      '#####%###.#',
+      '#...#.#...#',
+      '#d#.#.#.#.#',
+      '#>#...v.#s#',
+      '###########',
+    ],
+  },
+  {
+    id: 23,
+    name: "第 23 层 · 骸骨书库",
+    legend: {
+          G: "guard_23",
+          g: "imp_23",
+          k: "spr_23",
+          v: "patrol_23",
+          h: { id: "life_crystal", maxHp: 2800 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#%#<..&.#>#',
+      '#.###v#.#D#',
+      '#.v.#.#...#',
+      '###.#.#####',
+      '#h#.#.....#',
+      '#g#.#k###$#',
+      '#...#r#.%.#',
+      '#.#####v#G#',
+      '#.......#b#',
+      '###########',
+    ],
+  },
+  {
+    id: 24,
+    name: "第 24 层 · 熔金深渊",
+    legend: {
+          G: "guard_24",
+          g: "imp_24",
+          k: "spr_24",
+          v: "patrol_24",
+          t: "shield_diamond",
+          h: { id: "life_crystal", maxHp: 2900 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#yk.#....t#',
+      '###v#.#####',
+      '#r#$#.....#',
+      '#G#.#.###.#',
+      '#...#.R>#.#',
+      '#.#######.#',
+      '#.&.v.#.v.#',
+      '#####.#.#.#',
+      '#hg...%.#<#',
+      '###########',
+    ],
+  },
+  {
+    id: 25,
+    name: "第 25 层 · 寂灭回廊",
+    legend: {
+          G: "guard_25",
+          g: "imp_25",
+          k: "spr_25",
+          v: "patrol_25",
+          h: { id: "life_crystal", maxHp: 3000 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#hg.#bk..$#',
+      '###v#####.#',
+      '#>#......%#',
+      '#d#######.#',
+      '#....&Gy#.#',
+      '#.###.###.#',
+      '#.#<#...v.#',
+      '#.#.#######',
+      '#.v......%#',
+      '###########',
+    ],
+  },
+  {
+    id: 26,
+    name: "第 26 层 · 妖星观测台",
+    legend: {
+          G: "guard_26",
+          g: "imp_26",
+          k: "spr_26",
+          v: "patrol_26",
+          h: { id: "life_crystal", maxHp: 3200 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#S#<.....$#',
+      '#k###v###.#',
+      '#&....#%#.#',
+      '#######.#.#',
+      '#.....v.#.#',
+      '#.#%#g###.#',
+      '#.#.#h#...#',
+      '#G#.###v###',
+      '#b#.r...D>#',
+      '###########',
+    ],
+  },
+  {
+    id: 27,
+    name: "第 27 层 · 断罪刑场",
+    legend: {
+          G: "guard_27",
+          g: "imp_27",
+          k: "spr_27",
+          v: "patrol_27",
+          h: { id: "life_crystal", maxHp: 3400 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#rG.#hg...#',
+      '###v###k#.#',
+      '#%#...#y#.#',
+      '#.###.###&#',
+      '#..$#.....#',
+      '#%#######v#',
+      '#.....R>#.#',
+      '#v###.###.#',
+      '#..<#.....#',
+      '###########',
+    ],
+  },
+  {
+    id: 28,
+    name: "第 28 层 · 湮灭之门",
+    legend: {
+          G: "guard_28",
+          g: "imp_28",
+          k: "spr_28",
+          v: "patrol_28",
+          h: { id: "life_crystal", maxHp: 3600 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#h#.....#b#',
+      '#g#.###.#k#',
+      '#.v.#%#...#',
+      '#####.###.#',
+      '#>#%....#.#',
+      '#d#.###.#.#',
+      '#...#<#.v.#',
+      '#.###.#####',
+      '#..&v.$.Gy#',
+      '###########',
+    ],
+  },
+  {
+    id: 29,
+    name: "第 29 层 · 无光圣殿",
+    legend: {
+          G: "guard_29",
+          g: "imp_29",
+          k: "spr_29",
+          v: "patrol_29",
+          h: { id: "life_crystal", maxHp: 3800 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#bG.#...v.#',
+      '###.#D#.#k#',
+      '#<#$#>#.#S#',
+      '#.#.###.###',
+      '#.#...#...#',
+      '#v###.###&#',
+      '#.r.#.#.v.#',
+      '#.#.#.#.#g#',
+      '#%#....%#h#',
+      '###########',
+    ],
+  },
+  {
+    id: 30,
+    name: "第 30 层 · 魔王之座",
+    legend: {
+          G: "guard_30",
+          g: "imp_30",
+          k: "spr_30",
+          v: "patrol_30",
+          h: { id: "life_crystal", maxHp: 8200 },
+          "$": { value: 650 },
+          "%": { value: 300 },
+          "&": { value: 200 },
+    },
+    rows: [
+      '###########',
+      '#%k.v%#.RX#',
+      '#####.#v###',
+      '#.gh#.#...#',
+      '#.###.#.#.#',
+      '#.....#<#.#',
+      '#.#######.#',
+      '#.&.v.#...#',
+      '#####.#.#.#',
+      '#rG$....#%#',
+      '###########',
+    ],
+  }
+/* ==== LEVELS:END ==== */
+];
+
+const gridCache = new Map();
+
+/** 把字符地图解析成二维格子数组（带缓存），legend 在这里生效 */
+function getGrid(levelIndex) {
+  if (!gridCache.has(levelIndex)) {
+    const level = LEVELS[levelIndex];
+    if (!level) return null;
+    const legend = level.legend || {};
+    gridCache.set(levelIndex, level.rows.map((row) =>
+      Array.from(row, (ch) => {
+        const base = TILE_CHARS[ch] || { t: "floor" };
+        const over = legend[ch];
+        // legend 值可以是字符串（直接当 id）或对象（覆盖任意字段）
+        const patch = typeof over === "string" ? { id: over } : (over || {});
+        return { ...base, ...patch, ch };
+      })
+    ));
+  }
+  return gridCache.get(levelIndex);
+}
+
+/** 取某个格子，越界返回 null */
+function tileAt(levelIndex, x, y) {
+  const grid = getGrid(levelIndex);
+  if (!grid) return null;
+  if (y < 0 || y >= grid.length) return null;
+  const row = grid[y];
+  if (x < 0 || x >= row.length) return null;
+  return row[x];
+}
+
+/** 在某层里找到某个字符的位置（用于定位出生点、楼梯） */
+function findCharInLevel(levelIndex, ch) {
+  const grid = getGrid(levelIndex);
+  if (!grid) return null;
+  for (let y = 0; y < grid.length; y++) {
+    const x = grid[y].findIndex((c) => c.ch === ch);
+    if (x >= 0) return { x, y };
+  }
+  return null;
+}
+
+/**
+ * 某一层上出现的所有怪物 id（守关怪 + 魔王），按出现顺序去重。
+ * 怪物图鉴只列当前层的怪，所以这个函数就是图鉴的数据源。
+ */
+function monsterIdsOnLevel(levelIndex) {
+  const grid = getGrid(levelIndex);
+  if (!grid) return [];
+  const ids = [];
+  const seen = new Set();
+  for (const row of grid) {
+    for (const t of row) {
+      if (t.t !== 'monster' && t.t !== 'boss') continue;
+      if (!t.id || seen.has(t.id)) continue;
+      seen.add(t.id);
+      ids.push(t.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * 换层之后的落点：目标层楼梯**旁边**的一格，不站到楼梯上。
+ *
+ * 站在楼梯上有两个毛病：人物图标会把 ↑↓ 盖住，看不出那是楼梯；
+ * 背包里有传送卷轴时，站在楼梯上按 ↑↓ 会立刻再传送，想挪开都别扭。
+ * 所以落地一律落在隔壁能走的格子上：优先空地，其次才是别的
+ * （上楼时楼梯口那扇门是唯一邻居，只能落在门上）。
+ * 楼梯四面全是墙时（正常关卡不会出现）才退回楼梯本身。
+ */
+function landingNear(levelIndex, stairChar) {
+  const stair = findCharInLevel(levelIndex, stairChar);
+  if (!stair) return null;
+  const grid = getGrid(levelIndex);
+  const cand = [];
+  for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+    const x = stair.x + dx, y = stair.y + dy;
+    if (y < 0 || x < 0 || y >= grid.length || x >= grid[0].length) continue;
+    const t = grid[y][x];
+    if (!t || t.t === 'wall') continue;
+    cand.push({ x, y, t });
+  }
+  if (!cand.length) return { x: stair.x, y: stair.y };
+  const plain = cand.find((c) => c.t.t === 'floor' || c.t.t === 'start');
+  const spot = plain || cand[0];
+  return { x: spot.x, y: spot.y };
+}
+
+/** 商店货架：每家商店的货架一样，买下当场生效，不进背包 */
+const DEFAULT_SHOP_STOCK = [
+  { id: 'shop_heal_1', count: 6 },
+  { id: 'shop_heal_2', count: 6 },
+  { id: 'shop_heal_3', count: 2 },
+  { id: 'shop_atk', count: 1 },
+  { id: 'shop_def', count: 1 },
+];
+
+// ===== js/data/items.js =====
+/**
+ * 道具图鉴。数值、文案、图标、价格全在这里，加道具不用改规则层。
+ * 30 层塔的属性曲线是倒推出来的：
+ *   剑 5 档 取最高档：铁剑 +300 → 青铜剑 +900 → 白银剑 +1800 → 黄金剑 +2900 → 钻石剑 +4900
+ *   盾 5 档 取最高档：木盾 +60 → 铁盾 +150 → 银盾 +300 → 黄金盾 +500 → 钻石盾 +1250
+ *   生命结晶逐层累加，合计 +67200
+ *   终局面板 攻击 5000 / 防御 1300 / 生命上限 68000
+ */
+const ITEMS = {
+  // ---- 武器（攻击）5 档：只生效最高档，拾取低档无效 ----
+  sword_iron     : { name: '铁剑', type: 'equip', line: 'weapon', tier: 1, atk: 300, icon: '⚔️', desc: '攻击力 +300（1 档）' },
+  sword_bronze   : { name: '青铜剑', type: 'equip', line: 'weapon', tier: 2, atk: 900, icon: '⚔️', desc: '攻击力 +900（2 档）' },
+  sword_silver   : { name: '白银剑', type: 'equip', line: 'weapon', tier: 3, atk: 1800, icon: '⚔️', desc: '攻击力 +1800（3 档）' },
+  sword_gold     : { name: '黄金剑', type: 'equip', line: 'weapon', tier: 4, atk: 2900, icon: '⚔️', desc: '攻击力 +2900（4 档）' },
+  sword_diamond  : { name: '钻石剑', type: 'equip', line: 'weapon', tier: 5, atk: 4900, icon: '🗡️', desc: '攻击力 +4900（5 档）' },
+
+  // ---- 防具（防御）5 档：只生效最高档 ----
+  shield_wood    : { name: '木盾', type: 'equip', line: 'armor', tier: 1, def: 60, icon: '🛡️', desc: '防御力 +60（1 档）' },
+  shield_iron    : { name: '铁盾', type: 'equip', line: 'armor', tier: 2, def: 150, icon: '🛡️', desc: '防御力 +150（2 档）' },
+  shield_silver  : { name: '银盾', type: 'equip', line: 'armor', tier: 3, def: 300, icon: '🛡️', desc: '防御力 +300（3 档）' },
+  shield_gold    : { name: '黄金盾', type: 'equip', line: 'armor', tier: 4, def: 500, icon: '🛡️', desc: '防御力 +500（4 档）' },
+  shield_diamond : { name: '钻石盾', type: 'equip', line: 'armor', tier: 5, def: 1250, icon: '🛡️', desc: '防御力 +1250（5 档）' },
+
+  // ---- 生命结晶（生命上限，逐层累加；数值由各层 legend 覆盖）----
+  // 捡到当场回满血：塔里没有药水，加血只有即时性，没有"存起来以后再喝"的东西
+  life_crystal: { name: '生命结晶', type: 'heart', maxHp: 0, icon: '💠', desc: '提高生命上限，并回满血' },
+
+  // ---- 怪物图鉴（第 1 层出口拾取，进了背包，按 B 可以随时打开）----
+  monster_book: { name: '怪物图鉴', type: 'book', icon: '📖', desc: '查看当前层怪物的属性和战斗结论' },
+
+  // ---- 传送卷轴（第 15 层拾取，进了背包，按 ↑ / ↓ 在楼梯旁边上下楼）----
+  warp_scroll: { name: '传送卷轴', type: 'warp', icon: '📜', desc: '站在楼梯旁边时，按 ↑ / ↓ 可以上下楼' },
+
+  // ---- 钥匙 ----
+  key_yellow: { name: '黄钥匙', short: '黄', type: 'key', lock: 'yellow', icon: '🔑', desc: '打开一扇黄门' },
+  key_blue:   { name: '蓝钥匙', short: '蓝', type: 'key', lock: 'blue',   icon: '🔑', desc: '打开一扇蓝门' },
+  key_red:    { name: '红钥匙', short: '红', type: 'key', lock: 'red',    icon: '🔑', desc: '打开一扇红门' },
+
+  // ---- 商店商品：买下当场生效，不进背包、不留存 ----
+  //   疗伤丹：血立刻涨上去；磨刀石 / 护心镜：攻击力、防御力永久加到面板上
+  shop_heal_1: { name: '疗伤丹 · 小', type: 'heal', heal: 1000, price: 150,  icon: '💊', desc: '立刻恢复 1000 点生命' },
+  shop_heal_2: { name: '疗伤丹 · 中', type: 'heal', heal: 2500, price: 400,  icon: '💊', desc: '立刻恢复 2500 点生命' },
+  shop_heal_3: { name: '疗伤丹 · 大', type: 'heal', heal: 5000, price: 1000, icon: '💊', desc: '立刻恢复 5000 点生命' },
+  shop_atk:    { name: '磨刀石',     type: 'bonus', atk: 200, price: 2000, icon: '🪨', desc: '攻击力永久 +200（买下立刻生效）' },
+  shop_def:    { name: '护心镜',     type: 'bonus', def: 100, price: 2000, icon: '🔰', desc: '防御力永久 +100（买下立刻生效）' },
+};
+
+const ITEM_LIST = Object.keys(ITEMS);
+
+/** 背包条目（只有怪物图鉴和传送卷轴会进背包：装备即时生效，钥匙单独计数） */
+function bagEntries(state) {
+  return ITEM_LIST
+    .filter((id) => state.bag[id] > 0)
+    .map((id, index) => ({
+      slot: index + 1,
+      id,
+      count: state.bag[id],
+      item: ITEMS[id],
+    }));
+}
+
+// ===== js/core/state.js =====
+const STATE_VERSION = 5;
+
+/**
+ * 基础属性。
+ * 武器和防具是"取最高档替换"（低档拾取无效），
+ * 生命结晶是在生命上限上"累加"，所以上限类道具只有一条线。
+ */
+const BASE_STATS = { atk: 100, def: 50, maxHp: 800 };
+
+/** 新游戏初始状态。pos 由关卡的出生点填入。 */
+function createInitialState(start) {
+  return {
+    version: STATE_VERSION,
+    level: 0,
+    pos: { x: start.x, y: start.y },
+    hp: BASE_STATS.maxHp,
+    maxHp: BASE_STATS.maxHp,
+    atk: BASE_STATS.atk,
+    def: BASE_STATS.def,
+    gold: 0,
+    keys: { yellow: 0, blue: 0, red: 0 },
+    bag: {},       // 道具 id -> 数量（只有怪物图鉴和传送卷轴）
+    gear: {       // 武器/防具各一个槽，只保留最高档
+      weapon: null,   // { id, tier, atk }
+      armor: null,    // { id, tier, def }
+    },
+    flags: {},     // 预留：剧情/机关开关
+    openDoors: {}, // "层:x,y" -> true，已开过的门不再扣钥匙
+    taken: {},     // "层:x,y" -> true，一次性效果已结算
+    bonus: { atk: 0, def: 0 },   // 商店买的永久加攻/加防（直接算进面板）
+    shop: null,    // 进入商店时：{ stock: [{id,count}] }
+    steps: 0,
+    status: 'playing', // playing | inShop | inBook | dead | win
+  };
+}
+
+/** 深拷贝。reducer 只改副本，原状态永不被就地修改。 */
+function cloneState(s) {
+  return {
+    ...s,
+    pos: { ...s.pos },
+    keys: { ...s.keys },
+    bag: { ...s.bag },
+    gear: {
+      weapon: s.gear && s.gear.weapon ? { ...s.gear.weapon } : null,
+      armor: s.gear && s.gear.armor ? { ...s.gear.armor } : null,
+    },
+    flags: { ...s.flags },
+    openDoors: { ...s.openDoors },
+    taken: { ...s.taken },
+    bonus: { ...s.bonus },
+    shop: s.shop ? { stock: s.shop.stock.map((x) => ({ ...x })) } : null,
+  };
+}
+
+// ===== js/data/balance.js =====
+/**
+ * 全塔的数值底表：剑盾档位、每层生命结晶、玩家面板推算。
+ *
+ * 这份表是唯一的"事实来源"：
+ *   - 关卡生成器（tools/gen-levels.mjs）用它决定每层摆什么、给多少生命结晶；
+ *   - 怪物表（js/data/monsters.js）用它反推"巡逻怪"的数值；
+ *   - README 里那张 30 行的数值表也是照它排出来的。
+ *
+ * 三处都从这里取数，改一处全塔一致。
+ */
+
+/** 塔高 30 层（第 1 层在最底下） */
+const FLOOR_COUNT = 30;
+
+/** 剑：只生效最高档，所以攻击力 = 100 + 当前最高那把 */
+const SWORDS = [
+  { floor: 1, id: 'sword_iron', atk: 300 },
+  { floor: 7, id: 'sword_bronze', atk: 900 },
+  { floor: 13, id: 'sword_silver', atk: 1800 },
+  { floor: 17, id: 'sword_gold', atk: 2900 },
+  { floor: 22, id: 'sword_diamond', atk: 4900 },
+];
+
+/** 盾：只生效最高档 */
+const SHIELDS = [
+  { floor: 4, id: 'shield_wood', def: 60 },
+  { floor: 10, id: 'shield_iron', def: 150 },
+  { floor: 15, id: 'shield_silver', def: 300 },
+  { floor: 19, id: 'shield_gold', def: 500 },
+  { floor: 24, id: 'shield_diamond', def: 1250 },
+];
+
+/** 这一层（含本层的剑）之后的攻击力 */
+function atkOn(floor) {
+  let atk = 100;
+  for (const s of SWORDS) if (s.floor <= floor) atk = Math.max(atk, 100 + s.atk);
+  return atk;
+}
+
+/** 这一层（含本层的盾）之后的防御力 */
+function defOn(floor) {
+  let def = 50;
+  for (const s of SHIELDS) if (s.floor <= floor) def = Math.max(def, 50 + s.def);
+  return def;
+}
+
+/**
+ * 生命上限：每层一枚结晶。
+ * 1~25 层每层 +100，第 26 层起每层 +200（末层再给一大块），
+ * 合计 67200，正好把终局生命上限顶到 68000。
+ */
+function crystalOn(floor) {
+  if (floor === FLOOR_COUNT) return 8200;
+  if (floor <= 25) return 600 + (floor - 1) * 100;
+  return 3200 + (floor - 26) * 200;
+}
+
+/** 打完第 floor 层（含这层的结晶）之后的生命上限 */
+function maxHpOn(floor) {
+  let hp = 800;
+  for (let f = 1; f <= floor; f++) hp += crystalOn(f);
+  return hp;
+}
+
+/**
+ * 刚踏上第 floor 层时的玩家面板：身上的装备都来自下面的层，
+ * 本层的东西还没拿到。巡逻怪按这个面板标定，所以刚进层就一定打得过。
+ */
+function entryPanel(floor) {
+  const below = floor - 1;
+  return {
+    atk: atkOn(below),
+    def: defOn(below),
+    maxHp: below <= 0 ? 800 : maxHpOn(below),
+  };
+}
+
+/**
+ * 巡逻怪：站在通路上拦路的怪（不是守在死胡同门口的那种）。
+ * 数量随层数往上加，后半程路上基本一步一兵。
+ */
+function patrolCount(floor) {
+  return floor <= 15 ? 2 : 3;
+}
+
+/**
+ * 一场巡逻战吃掉多少血上限。
+ * 守关怪一场吃 18%，巡逻怪小一号，一场吃 8%——
+ * 一层要打 2~3 场，加上守关怪和壁龛里的小怪，
+ * 整层的消耗才撑得起"路上处处要打"的节奏。
+ */
+const PATROL_DAMAGE_RATIO = 0.08;
+
+/** 一场巡逻战打多少个回合 */
+const PATROL_ROUNDS = 5;
+
+// ===== js/data/monsters.js =====
+/**
+ * 怪物图鉴。
+ * 战斗公式：伤害 = max(1, 攻方攻击 - 守方防御)，双方每回合同时结算，玩家先手。
+ *
+ * 守关怪数值按"该层玩家打完本层装备后的面板"倒推：
+ *   每回合打玩家 3% 血上限（最多 700），一场怪大约吃掉 18% 血，3~12 回合打死。
+ *   塔里每层的怪变多了、也变强了（血量 ×1.25），一场怪吃掉的血更多，
+ *   所以每层补的东西也跟着加。
+ * 魔王是 20 万血的耐久战：玩家每回合打 4200，48 回合击杀，
+ *   魔王反击 47 次共 56400 伤害，终局面板 68000 血打完剩 11600。
+ *
+ * 三种怪：
+ *   守关怪（G）：每层 1 只，堵在开门钥匙前面，不打就拿不到钥匙。
+ *   壁龛小怪（g/k）：每层 2 只，守在生命结晶、传送卷轴这些死胡同门口。
+ *   巡逻怪（v）：每层 2~3 只，直接站在通路上拦路，把战斗密度铺到路上。
+ *
+ * 小怪和巡逻怪的数值不在这里手写，
+ *   而是从本层守关怪（或本层的进入面板）按比例派生，这样两套数字不会打架。
+ *   imp（小鬼）：血 35% / 攻 45% / 防 60% / 金币 30%
+ *   spr（史莱姆）：血 18% / 攻 25% / 防 40% / 金币 15%
+ *   patrol（巡逻怪）：按"刚进这一层时的面板"倒推，
+ *     打 5 个回合，每回合吃掉 8% 血上限
+ */
+
+const MONSTERS = {
+  guard_1        : { name: '绿史莱姆  ', hp:   2820, atk:    92, def:   24, gold:  112, icon: '🟢' },
+  guard_2        : { name: '蓝史莱姆  ', hp:   2820, atk:   113, def:   24, gold:  112, icon: '🔵' },
+  guard_3        : { name: '红史莱姆  ', hp:   2820, atk:   137, def:   24, gold:  112, icon: '🔴' },
+  guard_4        : { name: '红蝙蝠   ', hp:   2820, atk:   224, def:   24, gold:  112, icon: '🦇' },
+  guard_5        : { name: '骷髅兵   ', hp:   2820, atk:   254, def:   24, gold:  112, icon: '💀' },
+  guard_6        : { name: '幽 灵   ', hp:   2820, atk:   287, def:   24, gold:  112, icon: '👻' },
+  guard_7        : { name: '巨 魔   ', hp:   7050, atk:   323, def:   60, gold:  280, icon: '👹' },
+  guard_8        : { name: '毒沼巨兽  ', hp:   7050, atk:   362, def:   60, gold:  280, icon: '🐊' },
+  guard_9        : { name: '黑暗剑士  ', hp:   7050, atk:   404, def:   60, gold:  280, icon: '🗡️' },
+  guard_10       : { name: '魔王亲卫  ', hp:   7050, atk:   539, def:   60, gold:  280, icon: '🛡️' },
+  guard_11       : { name: '石像鬼   ', hp:   7050, atk:   587, def:   60, gold:  280, icon: '🟢' },
+  guard_12       : { name: '巫妖侍从  ', hp:   7050, atk:   638, def:   60, gold:  280, icon: '🔵' },
+  guard_13       : { name: '霜 狼   ', hp:  13395, atk:   692, def:  114, gold:  532, icon: '🔴' },
+  guard_14       : { name: '骨 龙   ', hp:  13395, atk:   749, def:  114, gold:  532, icon: '🦇' },
+  guard_15       : { name: '血月祭司  ', hp:  13395, atk:   959, def:  114, gold:  532, icon: '💀' },
+  guard_16       : { name: '深渊魔犬  ', hp:  13395, atk:  1022, def:  114, gold:  532, icon: '👻' },
+  guard_17       : { name: '万骨领主  ', hp:  24675, atk:  1050, def:  180, gold:  840, icon: '👹' },
+  guard_18       : { name: '虚空爬行者 ', hp:  24675, atk:  1050, def:  180, gold:  840, icon: '🐊' },
+  guard_19       : { name: '地狱三头犬 ', hp:  28200, atk:  1250, def:  180, gold:  840, icon: '🗡️' },
+  guard_20       : { name: '虚空魔   ', hp:  31725, atk:  1250, def:  180, gold:  840, icon: '🛡️' },
+  guard_21       : { name: '熔岩巨兽  ', hp:  31725, atk:  1250, def:  180, gold:  840, icon: '🟢' },
+  guard_22       : { name: '烬火魔   ', hp:  58750, atk:  1250, def:  300, gold: 1400, icon: '🔵' },
+  guard_23       : { name: '寒霜女妖  ', hp:  64625, atk:  1250, def:  300, gold: 1400, icon: '🔴' },
+  guard_24       : { name: '冰晶守卫  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '🦇' },
+  guard_25       : { name: '锈铁傀儡  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '💀' },
+  guard_26       : { name: '毒藤怪   ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '👻' },
+  guard_27       : { name: '深渊祭司  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '👹' },
+  guard_28       : { name: '虚空骑士  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '🐊' },
+  guard_29       : { name: '判罚天使  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '🗡️' },
+  guard_30       : { name: '终焉魔将  ', hp:  70500, atk:  2000, def:  300, gold: 1400, icon: '🛡️' },
+  demon_king:   { name: '魔 王',   hp: 200000, atk: 2500, def: 800, gold: 0,     icon: '👿' },
+};
+
+/* ---------------- 小怪：从本层守关怪派生 ---------------- */
+
+/** 小怪按层数分成 6 档，每档换个名字和图标，免得 30 层全是同一张脸 */
+const SMALL_TIERS = [
+  { imp: { name: '洞穴小鬼  ', icon: '👺' }, spr: { name: '青苔史莱姆', icon: '🟢' } },
+  { imp: { name: '暗巷小鬼  ', icon: '🧟' }, spr: { name: '幽蓝史莱姆', icon: '🔵' } },
+  { imp: { name: '黑雾小鬼  ', icon: '👻' }, spr: { name: '赤焰史莱姆', icon: '🔴' } },
+  { imp: { name: '血月小鬼  ', icon: '👹' }, spr: { name: '寒霜史莱姆', icon: '⚪' } },
+  { imp: { name: '虚空小鬼  ', icon: '💀' }, spr: { name: '虚空史莱姆', icon: '🟣' } },
+  { imp: { name: '魔殿小鬼  ', icon: '👿' }, spr: { name: '魔王史莱姆', icon: '⚫' } },
+];
+
+/* ---------------- 巡逻怪：站在通路上拦路的怪 ---------------- */
+
+/**
+ * 巡逻怪也分 6 档换名字换图标。
+ * 图标特意避开 🟢🔵🔴 这种纯色圆点——那是史莱姆的脸，
+ * 门要用实心方块来跟它们区分，巡逻怪也不能再撞脸。
+ */
+const PATROL_TIERS = [
+  { name: '巡逻土狼  ', icon: '🐺' },
+  { name: '铁面卫兵  ', icon: '🦂' },
+  { name: '赤瞳猎犬  ', icon: '🐍' },
+  { name: '寒霜巨蛛  ', icon: '🕷️' },
+  { name: '黑羽隼    ', icon: '🦅' },
+  { name: '魔殿龙裔  ', icon: '🐉' },
+];
+
+for (let floor = 1; floor <= 30; floor++) {
+  const g = MONSTERS['guard_' + floor];
+  if (!g) continue;
+  const tier = SMALL_TIERS[Math.min(SMALL_TIERS.length - 1, Math.floor((floor - 1) / 5))];
+  MONSTERS['imp_' + floor] = {
+    name: tier.imp.name, icon: tier.imp.icon,
+    hp: Math.round(g.hp * 0.35), atk: Math.round(g.atk * 0.45),
+    def: Math.round(g.def * 0.60), gold: Math.round(g.gold * 0.30),
+  };
+  MONSTERS['spr_' + floor] = {
+    name: tier.spr.name, icon: tier.spr.icon,
+    hp: Math.round(g.hp * 0.18), atk: Math.round(g.atk * 0.25),
+    def: Math.round(g.def * 0.40), gold: Math.round(g.gold * 0.15),
+  };
+
+  // 巡逻怪：按"刚踏上这一层时的面板"倒推，保证刚进层打得过。
+  const p = entryPanel(floor);
+  const pt = PATROL_TIERS[Math.min(PATROL_TIERS.length - 1, Math.floor((floor - 1) / 5))];
+  const monDef = Math.max(1, Math.round(p.atk * 0.08));      // 玩家每回合能打出的伤害
+  const dmgPerRound = Math.max(1, p.atk - monDef);
+  const hp = dmgPerRound * PATROL_ROUNDS;                    // 撑 PATROL_ROUNDS 个回合
+  const loss = Math.round(p.maxHp * PATROL_DAMAGE_RATIO);    // 一场要吃掉的血
+  const atk = p.def + Math.max(1, Math.round(loss / (PATROL_ROUNDS - 1)));
+  MONSTERS['patrol_' + floor] = {
+    name: pt.name, icon: pt.icon,
+    hp, atk, def: monDef,
+    gold: Math.round(g.gold * 0.25),
+  };
+}
+
+// ===== js/core/battle.js =====
+/**
+ * 回合制战斗结算（纯函数）。
+ * 玩家先手，双方每回合各攻击一次；伤害最低 1 点。
+ *
+ * 塔里没有药水：加血只有即时性，没有"存起来以后再喝"的东西。
+ * 所以这场仗怎么打就怎么结算：
+ *   1) 血量只会往下掉，不会比开打时更多；
+ *   2) 打不赢就是打不赢，血量一路掉到 0，没有药能续命；
+ *   3) 全塔只有两处回血：捡到生命结晶（当场回满），推开魔王房的门（回满）。
+ */
+function resolveBattle(player, monster) {
+  const log = [];
+  const hpAtStart = player.hp;
+  let mHp = monster.hp;
+  let pHp = player.hp;
+  let rounds = 0;
+
+  while (pHp > 0 && mHp > 0) {
+    rounds++;
+
+    const dmgToMonster = Math.max(1, player.atk - monster.def);
+    mHp -= dmgToMonster;
+    log.push(`你攻击 ${monster.name}，造成 ${dmgToMonster} 点伤害`);
+    if (mHp <= 0) break;
+
+    const dmgToPlayer = Math.max(1, monster.atk - player.def);
+    pHp -= dmgToPlayer;
+    log.push(`${monster.name} 攻击你，造成 ${dmgToPlayer} 点伤害`);
+    if (pHp <= 0) break;
+  }
+
+  return {
+    win: mHp <= 0 && pHp > 0,
+    rounds,
+    hpLeft: Math.max(0, pHp),
+    monsterHpLeft: Math.max(0, mHp),
+    gold: monster.gold || 0,
+    log,
+    hpAtStart,
+  };
+}
+
+/**
+ * 图鉴用的战斗预判：按玩家当前面板真打一遍，
+ * 结论和真打的时候完全一致：
+ *   'unsolvable' 不可战胜（这场仗怎么打都赢不了，硬冲就是死）
+ *   'nodamage'   无伤击杀
+ *   'damage'     损失 XXX 点血量
+ */
+function previewFight(player, monster) {
+  const res = resolveBattle(player, monster);
+  const loss = Math.max(0, player.hp - res.hpLeft);
+  const verdict = !res.win ? 'unsolvable' : (loss === 0 ? 'nodamage' : 'damage');
+  return { verdict, loss, rounds: res.rounds };
+}
+
+/** 把战斗预判翻成一句人话 */
+function verdictText(result) {
+  if (result.verdict === 'unsolvable') return '不可战胜';
+  if (result.verdict === 'nodamage') return '无伤击杀';
+  return `损失 ${result.loss} 点血量`;
+}
+
+// ===== js/core/effects.js =====
+/**
+ * 格子 -> 效果列表。
+ * 所有机制（钥匙、装备、生命、商店、战斗）最终都收敛成效果，规则层只有一条执行路径。
+ */
+function tileEffects(tile) {
+  switch (tile.t) {
+    case 'item': {
+      const item = ITEMS[tile.id];
+      if (!item) return [];
+      if (item.type === 'key')    return [{ kind: 'giveKey', color: item.lock, count: 1 }];
+      if (item.type === 'equip')  return [{ kind: 'equip', id: tile.id }];
+      if (item.type === 'heart')  return [{ kind: 'growMaxHp', id: tile.id, value: tile.maxHp }];
+      if (item.type === 'book')   return [{ kind: 'giveItem', id: tile.id, count: 1 }];
+      if (item.type === 'warp')   return [{ kind: 'giveItem', id: tile.id, count: 1 }];
+      return [];
+    }
+    case 'gold':    return [{ kind: 'gold', value: tile.value }];
+    case 'monster': return [{ kind: 'battle', id: tile.id }];
+    case 'boss':    return [{ kind: 'battle', id: tile.id, boss: true }];
+    case 'shop':    return [{ kind: 'openShop', stock: DEFAULT_SHOP_STOCK }];
+    default:        return [];
+  }
+}
+
+/** 按当前装备重算攻防（武器/防具取最高档，所以是替换而不是累加） */
+function recomputeStats(s) {
+  // 商店买的磨刀石 / 护心镜是永久加攻加防，直接算进面板
+  const bonus = s.bonus || { atk: 0, def: 0 };
+  s.atk = BASE_STATS.atk + (s.gear.weapon ? s.gear.weapon.atk : 0) + (bonus.atk || 0);
+  s.def = BASE_STATS.def + (s.gear.armor ? s.gear.armor.def : 0) + (bonus.def || 0);
+}
+
+const HANDLERS = {
+  giveKey(s, p) {
+    const count = p.count || 1;
+    s.keys[p.color] = (s.keys[p.color] || 0) + count;
+    return { events: [{ text: `获得 ${LOCK_NAMES[p.color]} ×${count}`, kind: 'item' }] };
+  },
+
+  giveItem(s, p) {
+    const item = ITEMS[p.id];
+    const count = p.count || 1;
+    s.bag[p.id] = (s.bag[p.id] || 0) + count;
+    const events = [{ text: `获得 ${item.name} ×${count}`, kind: 'item' }];
+    // 怪物图鉴：捡到就直接翻开，之后按 B 可以随时再看
+    if (item.type === 'book') {
+      s.status = 'inBook';
+      events.push({ text: '翻开怪物图鉴：可以查当前层怪物的属性和战斗结论。', kind: 'level' });
+    }
+    return { events };
+  },
+
+  // 装备只认最高档：拿到低档不生效，同档也不生效
+  equip(s, p) {
+    const item = ITEMS[p.id];
+    const line = item.line;                       // 'weapon' / 'armor'
+    const tier = item.tier || 1;
+    const cur = s.gear[line];
+    const kindName = line === 'weapon' ? '武器' : '防具';
+
+    if (cur && cur.tier >= tier) {
+      return {
+        events: [{
+          text: `已经有 ${cur.tier} 档的${kindName}了，${item.name} 无效。`,
+          kind: 'info',
+        }],
+      };
+    }
+
+    s.gear[line] = {
+      id: p.id,                 // 用格子上的道具 id；图鉴条目本身没有 id 字段
+      tier,
+      atk: item.atk || 0,
+      def: item.def || 0,
+    };
+    recomputeStats(s);
+
+    const detail = item.atk ? `攻击 +${item.atk}` : `防御 +${item.def}`;
+    return { events: [{ text: `装备了 ${item.name}（${detail}，${tier} 档）`, kind: 'item' }] };
+  },
+
+  // 生命结晶：上限抬高，同时把血补满。
+  // 补满是"即时"的——血当场就回来了，塔里不存在存着以后再喝的东西。
+  growMaxHp(s, p) {
+    const item = ITEMS[p.id];
+    const gain = p.value != null ? p.value : (item.maxHp || 0);
+    if (gain <= 0) return { events: [] };
+    s.maxHp += gain;
+    s.hp = s.maxHp;
+    return { events: [{ text: `获得 ${item.name}（生命上限 +${gain}，血量回满 ${s.hp}）`, kind: 'item' }] };
+  },
+
+  gold(s, p) {
+    const value = p.value || 0;
+    s.gold += value;
+    return { events: [{ text: `获得 ${value} 金币`, kind: 'item' }] };
+  },
+
+  openShop(s, p) {
+    s.status = 'inShop';
+    s.shop = { stock: (p.stock || []).map((x) => ({ ...x })) };
+    return {
+      events: [{ text: '进入商店。', kind: 'level' }],
+      interrupt: { kind: 'shop' },
+    };
+  },
+
+  battle(s, p) {
+    const mon = MONSTERS[p.id];
+    const events = [];
+
+    // 推开魔王房的门，伤口愈合，血量回到上限。
+    // 这一仗要打 48 回合、硬挨 56400 点伤害，中途没有任何补给，
+    // 所以进门先回满——魔王战是硬碰硬的一场，不是消耗战。
+    if (p.boss && s.hp < s.maxHp) {
+      events.push({ text: `推开魔王房的门，伤口愈合，血量回到 ${s.maxHp}。`, kind: 'heal' });
+      s.hp = s.maxHp;
+    }
+
+    const res = resolveBattle({ hp: s.hp, maxHp: s.maxHp, atk: s.atk, def: s.def }, mon);
+    res.log.forEach((text) => events.push({ text, kind: text.startsWith('你') ? 'hit' : 'hurt' }));
+    s.hp = res.hpLeft;
+
+    if (!res.win) {
+      s.status = 'dead';
+      events.push({ text: `你被 ${mon.name} 击败了……`, kind: 'death' });
+      return { events, interrupt: { kind: 'dead' } };
+    }
+
+    s.gold += mon.gold || 0;
+    events.push({ text: `击败 ${mon.name}，获得 ${mon.gold} 金币`, kind: 'kill' });
+
+    if (p.boss) {
+      s.status = 'win';
+      events.push({ text: '魔王倒下了，塔的诅咒解除了！', kind: 'win' });
+      return { events, interrupt: { kind: 'win' } };
+    }
+    return { events };
+  },
+};
+
+/**
+ * 执行一串效果。
+ * 任何一步返回 interrupt 就中断（例如战斗失败、进入商店），此时格子不会标记为已结算。
+ */
+function applyEffects(state, effects, tileKey) {
+  const events = [];
+
+  for (const eff of effects) {
+    const handler = HANDLERS[eff.kind];
+    if (!handler) continue;
+    const result = handler(state, eff) || {};
+    events.push(...(result.events || []));
+    if (result.interrupt) return { events, interrupt: result.interrupt };
+  }
+
+  if (tileKey) state.taken[tileKey] = true;
+  return { events, interrupt: null };
+}
+
+// ===== js/core/reducer.js =====
+const DIRS = {
+  up:    { x: 0,  y: -1 },
+  down:  { x: 0,  y: 1 },
+  left:  { x: -1, y: 0 },
+  right: { x: 1,  y: 0 },
+};
+
+/**
+ * 传送卷轴的生效范围：人站在楼梯格上，或者紧挨着楼梯格（上下左右）。
+ *
+ * 卷轴只在楼梯旁边有用，所以不在楼梯旁边时按 ↑ / ↓ 就是普通移动，
+ * 而且不出任何提示 —— 没生效的东西不该刷屏。
+ */
+function stairReach(state) {
+  const grid = getGrid(state.level);
+  const at = (x, y) => (grid[y] && grid[y][x]) || null;
+  const isStair = (t) => !!t && (t.t === 'stairUp' || t.t === 'stairDown');
+  if (isStair(at(state.pos.x, state.pos.y))) return true;
+  for (const d of Object.values(DIRS)) {
+    if (isStair(at(state.pos.x + d.x, state.pos.y + d.y))) return true;
+  }
+  return false;
+}
+
+/**
+ * 唯一改变世界的地方。
+ * step(state, action) -> { state, events }
+ * 输入状态不会被修改；events 是给表现层播日志用的。
+ */
+function step(state, action) {
+  // 商店里：可以买、关店、或者用方向键直接走人
+  if (state.status === 'inShop') {
+    if (action.type === 'BUY') return doBuy(state, action.itemId);
+    if (action.type === 'CLOSE_SHOP') return doCloseShop(state);
+    if (action.type === 'USE_ITEM') return doUseItem(state, action.itemId);
+    if (action.type === 'MOVE') {
+      const s = cloneState(state);
+      s.status = 'playing';
+      s.shop = null;
+      return doMove(s, action.dir);
+    }
+    return { state, events: [] };
+  }
+
+  // 怪物图鉴打开时：可以合上它、或者直接用方向键走人
+  if (state.status === 'inBook') {
+    if (action.type === 'CLOSE_BOOK') return doCloseBook(state);
+    if (action.type === 'USE_ITEM') return doUseItem(state, action.itemId);
+    if (action.type === 'MOVE') {
+      const s = cloneState(state);
+      s.status = 'playing';
+      return doMove(s, action.dir);
+    }
+    return { state, events: [] };
+  }
+
+  if (state.status !== 'playing') return { state, events: [] };
+
+  switch (action.type) {
+    case 'MOVE':     return doMove(state, action.dir);
+    case 'USE_ITEM': return doUseItem(state, action.itemId);
+    default:         return { state, events: [] };
+  }
+}
+
+function doMove(state, dir) {
+  const s = cloneState(state);
+  const d = DIRS[dir];
+  if (!d) return { state: s, events: [] };
+
+  const events = [];
+
+  // 传送卷轴：背包里有卷轴 + 人在楼梯格上或紧挨着楼梯格 → ↑ / ↓ 直接上下楼。
+  // 越界（顶层按 ↑、底层按 ↓）或者落点不存在，就退回普通移动，同样不提示。
+  if ((dir === 'up' || dir === 'down') && (s.bag.warp_scroll || 0) > 0 && stairReach(s)) {
+    const target = dir === 'up' ? s.level + 1 : s.level - 1;
+    const landing = target >= 0 && target < LEVELS.length
+      ? landingNear(target, dir === 'up' ? '<' : '>')
+      : null;
+    if (landing) {
+      s.level = target;
+      s.pos = { x: landing.x, y: landing.y };
+      s.steps += 1;
+      events.push({ text: `📜 传送卷轴：${LEVELS[target].name}`, kind: 'level' });
+      return { state: s, events };
+    }
+  }
+
+  const nx = s.pos.x + d.x;
+  const ny = s.pos.y + d.y;
+  const target = tileAt(s.level, nx, ny);
+
+  // 撞墙不提示：按方向键只是没走成，不用刷屏
+  if (!target || target.t === 'wall') {
+    return { state: s, events: [] };
+  }
+
+  // 门：没开过就先查钥匙
+  if (target.t === 'door') {
+    const doorKey = `${s.level}:${nx},${ny}`;
+    if (!s.openDoors[doorKey]) {
+      if ((s.keys[target.lock] || 0) > 0) {
+        s.keys[target.lock] -= 1;
+        s.openDoors[doorKey] = true;
+        events.push({ text: `用掉 1 把${LOCK_NAMES[target.lock]}，门打开了。`, kind: 'open' });
+      } else {
+        events.push({ text: `这扇门需要${LOCK_NAMES[target.lock]}。`, kind: 'warn' });
+        return { state: s, events };
+      }
+    }
+  }
+
+  // 走进去
+  s.pos = { x: nx, y: ny };
+  s.steps += 1;
+
+  // 楼梯：换层，落点自动对齐对层楼梯（往上落到对层 '<'，往下落到对层 '>'）
+  if (target.t === 'stairUp') {
+    const next = s.level + 1;
+    if (next >= LEVELS.length) {
+      events.push({ text: '这已经是最高层了。', kind: 'info' });
+      return { state: s, events };
+    }
+    const landing = landingNear(next, '<');
+    s.level = next;
+    s.pos = { x: landing.x, y: landing.y };
+    events.push({ text: `进入 ${LEVELS[next].name}`, kind: 'level' });
+    return { state: s, events };
+  }
+
+  if (target.t === 'stairDown') {
+    const prev = s.level - 1;
+    if (prev < 0) {
+      events.push({ text: '这里已经是最底层了。', kind: 'info' });
+      return { state: s, events };
+    }
+    const landing = landingNear(prev, '>');
+    s.level = prev;
+    s.pos = { x: landing.x, y: landing.y };
+    events.push({ text: `返回 ${LEVELS[prev].name}`, kind: 'level' });
+    return { state: s, events };
+  }
+
+  // 普通格子：效果只结算一次
+  const tileKey = `${s.level}:${nx},${ny}`;
+  if (s.taken[tileKey]) return { state: s, events };
+
+  const effects = tileEffects(target);
+  if (!effects.length) return { state: s, events };
+
+  const result = applyEffects(s, effects, tileKey);
+  events.push(...result.events);
+  return { state: s, events };
+}
+
+function doCloseBook(state) {
+  const s = cloneState(state);
+  s.status = 'playing';
+  return { state: s, events: [] };
+}
+
+/**
+ * 买商店里的东西。
+ *
+ * 规则：买下当场生效，不进背包。
+ *   疗伤丹 —— 血立刻涨上去；
+ *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
+ * 所以商店里没有"买来存着以后再喝"的东西：加血只有即时性。
+ */
+function doBuy(state, itemId) {
+  const s = cloneState(state);
+  const events = [];
+
+  if (!s.shop) { s.status = 'playing'; return { state: s, events }; }
+
+  const entry = s.shop.stock.find((x) => x.id === itemId);
+  const item = ITEMS[itemId];
+  if (!entry || !item || entry.count <= 0) {
+    events.push({ text: '这件商品已经卖完了。', kind: 'warn' });
+    return { state: s, events };
+  }
+  if (s.gold < item.price) {
+    events.push({ text: `金币不够，还差 ${item.price - s.gold} 枚。`, kind: 'warn' });
+    return { state: s, events };
+  }
+
+  // 回血：当场生效，不进背包；血已经满了就别花这个钱
+  if (item.type === 'heal') {
+    if (s.hp >= s.maxHp) {
+      events.push({ text: '生命值已经满了，买药没意义。', kind: 'warn' });
+      return { state: s, events };
+    }
+    const heal = Math.min(item.heal, s.maxHp - s.hp);
+    s.gold -= item.price;
+    entry.count -= 1;
+    s.hp += heal;
+    events.push({ text: `买下 ${item.name}，恢复了 ${heal} 点生命。`, kind: 'heal' });
+    return { state: s, events };
+  }
+
+  // 加攻 / 加防：永久，直接算进面板
+  if (item.type === 'bonus') {
+    s.gold -= item.price;
+    entry.count -= 1;
+    if (item.atk) {
+      s.bonus.atk += item.atk;
+      recomputeStats(s);
+      events.push({ text: `买下 ${item.name}，攻击力 +${item.atk}（现在是 ${s.atk}）。`, kind: 'item' });
+    }
+    if (item.def) {
+      s.bonus.def += item.def;
+      recomputeStats(s);
+      events.push({ text: `买下 ${item.name}，防御力 +${item.def}（现在是 ${s.def}）。`, kind: 'item' });
+    }
+    return { state: s, events };
+  }
+
+  events.push({ text: `${item.name} 买不了。`, kind: 'warn' });
+  return { state: s, events };
+}
+
+function doCloseShop(state) {
+  const s = cloneState(state);
+  s.status = 'playing';
+  s.shop = null;
+  return { state: s, events: [{ text: '离开了商店。', kind: 'info' }] };
+}
+
+function doUseItem(state, itemId) {
+  const s = cloneState(state);
+  const events = [];
+  const item = ITEMS[itemId];
+
+  if (!item) return { state: s, events };
+  // 怪物图鉴：不是"用掉"，是翻开
+  if (item.type === 'book') {
+    s.status = 'inBook';
+    events.push({ text: '翻开了怪物图鉴。', kind: 'info' });
+    return { state: s, events };
+  }
+  // 背包里剩下的两样（怪物图鉴、传送卷轴）都不是"按一下就生效"的东西
+  events.push({ text: `${item.name} 无法直接使用。`, kind: 'info' });
+  return { state: s, events };
+}
+
+// ===== js/view/keyIcon.js =====
+/**
+ * 钥匙图标。
+ *
+ * 以前地图上的三把钥匙画的都是同一个 🔑 emoji，玩家根本分不出手上这把
+ * 是黄钥匙还是蓝钥匙。现在统一成钥匙形状的矢量图，颜色直接取门用的
+ * 同一组色值（--lock-yellow / --lock-blue / --lock-red），
+ * 钥匙颜色 = 门颜色，一眼就知道该去开哪扇门。
+ */
+
+const KEY_PATH = 'M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z';
+
+/** 三种锁色，和 CSS 里的 --lock-* 一一对应 */
+const LOCK_CLASS = {
+  yellow: 'lock-yellow',
+  blue: 'lock-blue',
+  red: 'lock-red',
+};
+
+/**
+ * 钥匙图标的 HTML 片段。
+ * @param {string} lock 'yellow' | 'blue' | 'red'
+ */
+function keySvgHtml(lock) {
+  const cls = LOCK_CLASS[lock] || LOCK_CLASS.yellow;
+  return '<svg class="key-svg ' + cls + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    + '<path d="' + KEY_PATH + '" fill="currentColor"/></svg>';
+}
+
+// ===== js/view/mapView.js =====
+/**
+ * 地图渲染。只读 state，不含任何游戏规则。
+ * 换层时重建格子，其余时候只改格子内容。
+ */
+function createMapView(root) {
+  let builtLevel = -1;
+  let cells = [];
+
+  function build(levelIndex) {
+    const grid = getGrid(levelIndex);
+    root.innerHTML = '';
+    const board = document.createElement('div');
+    board.className = 'board';
+    board.style.gridTemplateColumns = `repeat(${grid[0].length}, var(--cell))`;
+
+    cells = [];
+    for (let y = 0; y < grid.length; y++) {
+      for (let x = 0; x < grid[y].length; x++) {
+        const cell = document.createElement('div');
+        cell.className = 'tile';
+        cell.dataset.x = String(x);
+        cell.dataset.y = String(y);
+        board.appendChild(cell);
+        cells.push(cell);
+      }
+    }
+    root.appendChild(board);
+    builtLevel = levelIndex;
+  }
+
+  function render(state) {
+    if (builtLevel !== state.level) build(state.level);
+
+    const grid = getGrid(state.level);
+    const width = grid[0].length;
+
+    for (let y = 0; y < grid.length; y++) {
+      for (let x = 0; x < grid[y].length; x++) {
+        const tile = grid[y][x];
+        const cell = cells[y * width + x];
+        const key = `${state.level}:${x},${y}`;
+        const taken = !!state.taken[key];
+        const opened = !!state.openDoors[key];
+
+        cell.className = 'tile';
+        cell.textContent = '';
+
+        let icon = '';
+        let keyLock = null;
+        switch (tile.t) {
+          case 'wall':
+            cell.classList.add('wall');
+            break;
+          case 'item':
+            cell.classList.add('item');
+            if (!taken) {
+              const item = ITEMS[tile.id];
+              // 钥匙画成带锁色的钥匙形状：颜色和同色的门一一对应，
+              // 不会再出现三把钥匙长得一模一样、认不出颜色的情况。
+              if (item && item.type === 'key') keyLock = item.lock || 'yellow';
+              else icon = (item && item.icon) || '';
+            }
+            break;
+          case 'gold':
+            cell.classList.add('item');
+            if (!taken) icon = '💰';
+            break;
+          case 'monster':
+            cell.classList.add('monster');
+            if (!taken) icon = (MONSTERS[tile.id] && MONSTERS[tile.id].icon) || '👾';
+            break;
+          case 'door':
+            // 门用整格实心的方块表示，不画钥匙圆点图标——
+            // 锁的图标是 🟡🔵🔴 这种圆点，和史莱姆的 🟢🔵🔴 长得几乎一样，
+            // 玩家分不清哪个是门哪个是怪。改成实心方块 + 颜色，一眼就分得开。
+            cell.classList.add('door');
+            if (opened) {
+              cell.classList.add('opened');
+            } else {
+              cell.classList.add('lock-' + (tile.lock || 'yellow'));
+            }
+            break;
+          case 'stairDown':
+            cell.classList.add('stair');
+            icon = '↓';
+            break;
+          case 'stairUp':
+            cell.classList.add('stair');
+            icon = '↑';
+            break;
+          case 'boss':
+            cell.classList.add('boss');
+            icon = MONSTERS[tile.id] ? MONSTERS[tile.id].icon : '👿';
+            break;
+          case 'goal':
+            cell.classList.add('goal');
+            icon = '👑';
+            break;
+          default:
+            break;
+        }
+
+        if (keyLock) {
+          cell.innerHTML = keySvgHtml(keyLock);
+        } else if (icon) {
+          const span = document.createElement('span');
+          span.className = 'icon';
+          span.textContent = icon;
+          cell.appendChild(span);
+        }
+
+        if (state.pos.x === x && state.pos.y === y) {
+          const player = document.createElement('span');
+          player.className = 'player';
+          player.textContent = '🧙';
+          cell.appendChild(player);
+        }
+      }
+    }
+  }
+
+  return { render };
+}
+
+// ===== js/view/hudView.js =====
+function createHudView(hudEl, keysEl, bagEl, gearEl) {
+  let onUseItem = null;
+
+  function render(state) {
+    // 状态
+    hudEl.innerHTML = '';
+    const rows = [
+      ['生命', state.hp],
+      ['攻击', state.atk],
+      ['防御', state.def],
+      ['金币', state.gold],
+      ['步数', state.steps],
+    ];
+    for (const [k, v] of rows) {
+      const row = document.createElement('div');
+      row.className = 'stat';
+      const key = document.createElement('span');
+      key.className = 'stat-k';
+      key.textContent = k;
+      const val = document.createElement('span');
+      val.className = 'stat-v';
+      val.textContent = String(v);
+      row.appendChild(key);
+      row.appendChild(val);
+      hudEl.appendChild(row);
+    }
+
+    // 装备：剑和盾各 5 档，只显示当前最高档
+    if (gearEl) {
+      gearEl.innerHTML = '';
+      const lines = [
+        { icon: '⚔️', slot: state.gear && state.gear.weapon },
+        { icon: '🛡️', slot: state.gear && state.gear.armor },
+      ];
+      for (const line of lines) {
+        const el = document.createElement('div');
+        el.className = 'gear-item';
+
+        const icon = document.createElement('span');
+        icon.className = 'gear-icon';
+        icon.textContent = line.icon;
+
+        const name = document.createElement('span');
+        name.className = 'gear-name';
+        name.textContent = line.slot
+          ? ((ITEMS[line.slot.id] && ITEMS[line.slot.id].name) || '未知装备')
+          : '未装备';
+
+        const dots = document.createElement('span');
+        dots.className = 'gear-dots';
+        for (let i = 1; i <= 5; i++) {
+          const dot = document.createElement('span');
+          dot.className = 'dot' + (line.slot && i <= line.slot.tier ? ' on' : '');
+          dots.appendChild(dot);
+        }
+
+        el.appendChild(icon);
+        el.appendChild(name);
+        el.appendChild(dots);
+        gearEl.appendChild(el);
+      }
+    }
+
+    // 钥匙
+    keysEl.innerHTML = '';
+    for (const color of ['yellow', 'blue', 'red']) {
+      const item = ITEMS[`key_${color}`];
+      const el = document.createElement('div');
+      el.className = 'key-item';
+      el.title = item.name;
+
+      const icon = document.createElement('span');
+      icon.className = 'key-icon';
+      icon.innerHTML = keySvgHtml(color);
+      const name = document.createElement('span');
+      name.className = 'key-name';
+      name.textContent = item.short;
+      const count = document.createElement('span');
+      count.className = 'key-count';
+      count.textContent = `×${state.keys[color] || 0}`;
+
+      el.appendChild(icon);
+      el.appendChild(name);
+      el.appendChild(count);
+      keysEl.appendChild(el);
+    }
+
+    // 背包
+    bagEl.innerHTML = '';
+    const entries = bagEntries(state);
+    if (!entries.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = '空空如也';
+      bagEl.appendChild(empty);
+      return;
+    }
+
+    for (const entry of entries) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'bag-item';
+      btn.title = entry.item.desc || '';
+
+      const slot = document.createElement('span');
+      slot.className = 'slot';
+      slot.textContent = String(entry.slot);
+      const icon = document.createElement('span');
+      icon.className = 'bag-icon';
+      icon.textContent = entry.item.icon;
+      const name = document.createElement('span');
+      name.className = 'bag-name';
+      name.textContent = entry.item.name;
+      const count = document.createElement('span');
+      count.className = 'bag-count';
+      count.textContent = `×${entry.count}`;
+
+      btn.appendChild(slot);
+      btn.appendChild(icon);
+      btn.appendChild(name);
+      btn.appendChild(count);
+      btn.addEventListener('click', () => {
+        if (onUseItem) onUseItem(entry.id);
+      });
+      bagEl.appendChild(btn);
+    }
+  }
+
+  return {
+    render,
+    setUseItemHandler(fn) { onUseItem = fn; },
+  };
+}
+
+// ===== js/view/logView.js =====
+const MAX_LINES = 80;
+
+function createLogView(el) {
+  function push(events) {
+    for (const e of events) {
+      const line = document.createElement('div');
+      line.className = `log-line log-${e.kind || 'info'}`;
+      line.textContent = e.text;
+      el.appendChild(line);
+    }
+    while (el.children.length > MAX_LINES) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function clear() {
+    el.innerHTML = '';
+  }
+
+  return { push, clear };
+}
+
+// ===== js/view/shopView.js =====
+/**
+ * 商店界面。渲染进 overlay 面板，点击购买 / 按数字键购买。
+ *
+ * 货架上的东西买下当场生效：疗伤丹立刻回血，磨刀石 / 护心镜永久加攻加防。
+ * 没有"买来存着以后再用"这一说 —— 加血只有即时性。
+ */
+function renderShop(overlay, state, onBuy, onLeave) {
+  overlay.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'overlay-card shop-card';
+
+  const title = document.createElement('h2');
+  title.textContent = '🛒 商人';
+  card.appendChild(title);
+
+  const gold = document.createElement('p');
+  gold.textContent = `当前金币：${state.gold}`;
+  card.appendChild(gold);
+
+  const stock = (state.shop && state.shop.stock) || [];
+  stock.forEach((entry, index) => {
+    const item = ITEMS[entry.id];
+    if (!item) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'shop-item';
+    btn.disabled = entry.count <= 0 || state.gold < item.price;
+    btn.innerHTML =
+      `<span class="slot">${index + 1}</span>` +
+      `<span class="bag-icon">${item.icon}</span>` +
+      `<span class="shop-name">${item.name}</span>` +
+      `<span class="shop-desc">${item.desc}</span>` +
+      `<span class="shop-stock">×${entry.count}</span>` +
+      `<span class="shop-price">${item.price} 金</span>`;
+
+    btn.addEventListener('click', () => onBuy(entry.id));
+    card.appendChild(btn);
+  });
+
+  const leave = document.createElement('button');
+  leave.type = 'button';
+  leave.className = 'overlay-leave';
+  leave.textContent = '离开商店（Esc）';
+  leave.addEventListener('click', onLeave);
+  card.appendChild(leave);
+
+  overlay.appendChild(card);
+}
+
+// ===== js/view/bookView.js =====
+/**
+ * 怪物图鉴面板。
+ *
+ * 只列当前层出现的怪：本层的守关怪（末层还有魔王）。
+ * 这一层没有怪就显示空状态，不列别层的怪，免得翻起来是一屏没用得上的数字。
+ *
+ * 表里给的是按玩家当前面板算出来的战斗结论
+ * （不可战胜 / 无伤击杀 / 损失 XXX 点血量）。
+ */
+function renderBook(overlay, state, onLeave) {
+  overlay.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'overlay-card book-card';
+
+  const floor = state.level + 1;
+  const ids = monsterIdsOnLevel(state.level);
+
+  const title = document.createElement('h2');
+  title.textContent = `📖 怪物图鉴 · 第 ${floor} 层`;
+  card.appendChild(title);
+
+  const desc = document.createElement('p');
+  desc.className = 'book-desc';
+  desc.textContent =
+    `当前面板：攻击 ${state.atk} / 防御 ${state.def} / 生命 ${state.hp}。` +
+    '结论按这个面板算：塔里没有药水，打不赢就是打不赢。';
+  card.appendChild(desc);
+
+  if (!ids.length) {
+    const empty = document.createElement('p');
+    empty.className = 'book-empty';
+    empty.textContent = `第 ${floor} 层没有怪物。这一层只有机关和路。`;
+    card.appendChild(empty);
+  } else {
+    const scroll = document.createElement('div');
+    scroll.className = 'book-scroll';
+
+    const table = document.createElement('table');
+    table.className = 'book-table';
+
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    ['怪物', '血量', '攻击', '防御', '金币', '战斗结论'].forEach((h) => {
+      const th = document.createElement('th');
+      th.textContent = h;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const player = { hp: state.hp, maxHp: state.maxHp, atk: state.atk, def: state.def };
+
+    ids.forEach((id) => {
+      const mon = MONSTERS[id];
+      if (!mon) return;
+      const r = previewFight(player, mon);
+      const tr = document.createElement('tr');
+      if (id === 'demon_king') tr.className = 'book-here';
+
+      const cells = [
+        { text: (mon.icon ? mon.icon + ' ' : '') + mon.name, cls: 'book-name' },
+        { text: mon.hp },
+        { text: mon.atk },
+        { text: mon.def },
+        { text: mon.gold },
+        { text: verdictText(r), cls: 'vd-' + r.verdict },
+      ];
+      cells.forEach((c) => {
+        const td = document.createElement('td');
+        if (c.cls) td.className = c.cls;
+        td.textContent = String(c.text);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    scroll.appendChild(table);
+    card.appendChild(scroll);
+  }
+
+  const leave = document.createElement('button');
+  leave.type = 'button';
+  leave.className = 'overlay-leave';
+  leave.textContent = '合上图鉴（Esc）';
+  leave.addEventListener('click', onLeave);
+  card.appendChild(leave);
+
+  overlay.appendChild(card);
+}
+
+// ===== js/ui/input.js =====
+const KEY_DIRS = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  w: 'up', a: 'left', s: 'down', d: 'right',
+  W: 'up', A: 'left', S: 'down', D: 'right',
+};
+
+/**
+ * 键盘输入。中文输入法下 key 会变成大写，额外用 e.code 兜底。
+ */
+function createInput(target, handlers) {
+  function onKeyDown(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      handlers.escape();
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (handlers.enter) handlers.enter();
+      return;
+    }
+
+    let dir = KEY_DIRS[e.key];
+    if (!dir && e.code && e.code.startsWith('Key')) {
+      const c = e.code.slice(3).toLowerCase();
+      if (c === 'w' || c === 'a' || c === 's' || c === 'd') dir = KEY_DIRS[c];
+    }
+    if (dir) {
+      e.preventDefault();
+      handlers.move(dir);
+      return;
+    }
+
+    // 允许 0：跨层面板要能选两位数（10 及以上）
+    if (/^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      handlers.slot(Number(e.key));
+      return;
+    }
+
+    if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      if (handlers.book) handlers.book();
+      return;
+    }
+
+    if (e.key === 'u' || e.key === 'U') {
+      e.preventDefault();
+      handlers.undo();
+    }
+  }
+
+  target.addEventListener('keydown', onKeyDown);
+  return {
+    destroy() { target.removeEventListener('keydown', onKeyDown); },
+  };
+}
+
+// ===== js/ui/storage.js =====
+const SAVE_KEY = 'magic-tower-save-v1';
+
+/**
+ * 本地存档。state 是纯数据，直接 JSON 序列化即可，
+ * 所以存档 / 读档不需要任何额外的状态转换代码。
+ */
+function saveState(state) {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      version: STATE_VERSION,
+      savedAt: Date.now(),
+      state,
+    }));
+    return true;
+  } catch (err) {
+    console.warn('保存失败', err);
+    return false;
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.version !== STATE_VERSION || !data.state) return null;
+    return data.state;
+  } catch (err) {
+    console.warn('读取存档失败', err);
+    return null;
+  }
+}
+
+function clearState() {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (err) {
+    console.warn('清除存档失败', err);
+  }
+}
+
+function hasSave() {
+  try {
+    return !!localStorage.getItem(SAVE_KEY);
+  } catch (err) {
+    return false;
+  }
+}
+
+// ===== js/main.js =====
+const $ = (id) => document.getElementById(id);
+
+const mapView = createMapView($('map'));
+const hudView = createHudView($('hud'), $('keys'), $('bag'), $('gear'));
+const logView = createLogView($('log'));
+const overlay = $('overlay');
+
+let state = null;
+const history = [];   // 撤销栈：存每一步之前的 state
+const MAX_HISTORY = 200;
+// 数字缓冲：编号超过 9 时要能选到两位数（商店第 10 件起、背包第 10 件起）
+let digitBuf = '';
+
+function newGame() {
+  const start = findCharInLevel(0, '@');
+  state = createInitialState(start);
+  history.length = 0;
+  logView.clear();
+  logView.push([{ text: `欢迎来到魔塔，共 ${LEVELS.length} 层。魔王在塔顶等着你。`, kind: 'level' }]);
+  render();
+}
+
+function dispatch(action) {
+  const before = state;
+  const result = step(state, action);
+  state = result.state;
+  // 界面换了（打开图鉴 / 传送）就丢掉没选完的数字缓冲
+  if (before.status !== state.status) digitBuf = '';
+
+  if (result.events.length) logView.push(result.events);
+
+  const moved = state.steps !== before.steps || state.level !== before.level;
+  if (moved) {
+    history.push(before);
+    if (history.length > MAX_HISTORY) history.shift();
+  }
+
+  render();
+
+  // 只有还活着的时候才自动存档，这样"读取存档"能回到阵亡前那一刻
+  if (state.status === 'playing' || state.status === 'inShop' || state.status === 'inBook') saveState(state);
+}
+
+function undo() {
+  if (!history.length) {
+    logView.push([{ text: '没有可撤销的步骤了。', kind: 'info' }]);
+    return;
+  }
+  state = history.pop();
+  logView.push([{ text: '撤销了一步。', kind: 'info' }]);
+  render();
+  if (state.status === 'playing') saveState(state);
+}
+
+function loadGame() {
+  const saved = loadState();
+  if (!saved) {
+    logView.push([{ text: '没有找到本地存档。', kind: 'warn' }]);
+    return;
+  }
+  state = cloneState(saved);
+  history.length = 0;
+  logView.push([{ text: '已读取本地存档。', kind: 'info' }]);
+  render();
+}
+
+function render() {
+  // 顶栏只留「第 n 层」；楼层名（庭院 / 石阶 / …）留在数据里，悬停能看见
+  const lv = LEVELS[state.level];
+  $('level-name').textContent = `第 ${state.level + 1} 层`;
+  $('level-name').title = lv.name;
+  mapView.render(state);
+  hudView.render(state);
+  updateOverlay();
+}
+
+function updateOverlay() {
+  if (state.status === 'playing') {
+    overlay.hidden = true;
+    overlay.innerHTML = '';
+    return;
+  }
+
+  overlay.hidden = false;
+
+  if (state.status === 'inShop') {
+    renderShop(
+      overlay,
+      state,
+      (itemId) => dispatch({ type: 'BUY', itemId }),
+      () => dispatch({ type: 'CLOSE_SHOP' })
+    );
+    return;
+  }
+
+  if (state.status === 'inBook') {
+    renderBook(overlay, state, () => dispatch({ type: 'CLOSE_BOOK' }));
+    return;
+  }
+
+  overlay.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'overlay-card';
+
+  const title = document.createElement('h2');
+  const desc = document.createElement('p');
+  const buttons = [];
+
+  if (state.status === 'win') {
+    title.textContent = '🎉 通关成功！';
+    desc.textContent =
+      `一共走了 ${state.steps} 步，剩余生命 ${state.hp}，共获得 ${state.gold} 金币。`;
+  } else {
+    title.textContent = '💀 你倒下了';
+    desc.textContent = '存档保留在了倒下的那一刻之前，可以读取回来重试。';
+    buttons.push({ label: '读取存档', fn: loadGame });
+  }
+  buttons.push({ label: '再来一局', fn: newGame });
+
+  card.appendChild(title);
+  card.appendChild(desc);
+  for (const b of buttons) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = b.label;
+    btn.addEventListener('click', b.fn);
+    card.appendChild(btn);
+  }
+  overlay.appendChild(card);
+}
+
+hudView.setUseItemHandler((itemId) => dispatch({ type: 'USE_ITEM', itemId }));
+
+/**
+ * 当前状态下能选的东西：商店货架、背包。
+ * 统一成"1 起的连续编号"，这样数字键就能用同一套两位数逻辑。
+ */
+function digitPicker() {
+  if (state.status === 'inShop') {
+    const stock = (state.shop && state.shop.stock) || [];
+    return {
+      count: stock.length,
+      pick: (n) => {
+        const entry = stock[n - 1];
+        if (entry) dispatch({ type: 'BUY', itemId: entry.id });
+      },
+    };
+  }
+  const entries = bagEntries(state);
+  return {
+    count: entries.length,
+    pick: (n) => {
+      const entry = entries[n - 1];
+      if (entry) dispatch({ type: 'USE_ITEM', itemId: entry.id });
+    },
+  };
+}
+
+/**
+ * 按下一个数字键。
+ * 如果还存在"更长的编号以当前缓冲开头"（比如按了 1，但货架上有 13 件），
+ * 先攒着等下一个数字；回车可以确定。
+ */
+function pressDigit(d) {
+  const picker = digitPicker();
+  if (!picker.count) return;
+  digitBuf += d;
+  const num = Number(digitBuf);
+
+  for (let i = picker.count; i >= 1; i--) {
+    const label = String(i);
+    if (label.length > digitBuf.length && label.startsWith(digitBuf)) return;   // 还能是两位数
+  }
+
+  digitBuf = '';
+  if (num < 1 || num > picker.count) return;
+  picker.pick(num);
+}
+
+/** 回车：确定缓冲里的编号 */
+function confirmDigit() {
+  if (!digitBuf) return;
+  const picker = digitPicker();
+  const num = Number(digitBuf);
+  digitBuf = '';
+  if (num >= 1 && num <= picker.count) picker.pick(num);
+}
+
+createInput(window, {
+  move: (dir) => { digitBuf = ''; dispatch({ type: 'MOVE', dir }); },
+  slot: (n) => {
+    if (state.status === 'inBook') return;   // 图鉴开着的时候数字键不做事
+    pressDigit(String(n));
+  },
+  undo,
+  book: () => {
+    if (state.status === 'inBook') { dispatch({ type: 'CLOSE_BOOK' }); return; }
+    if (state.bag && state.bag.monster_book) {
+      dispatch({ type: 'USE_ITEM', itemId: 'monster_book' });
+    }
+  },
+  enter: () => {
+    confirmDigit();
+  },
+  escape: () => {
+    digitBuf = '';
+    if (state.status === 'inShop') dispatch({ type: 'CLOSE_SHOP' });
+    if (state.status === 'inBook') dispatch({ type: 'CLOSE_BOOK' });
+  },
+});
+
+$('btn-save').addEventListener('click', () => {
+  const ok = saveState(state);
+  logView.push([{ text: ok ? '已保存到本地存档。' : '保存失败（浏览器可能禁用了本地存储）。', kind: ok ? 'info' : 'warn' }]);
+});
+
+$('btn-load').addEventListener('click', loadGame);
+
+$('btn-reset').addEventListener('click', () => {
+  if (!window.confirm('确定要清空本地存档并重新开始吗？')) return;
+  clearState();
+  newGame();
+});
+
+newGame();
+
+// 标记"游戏已经跑起来了"。index.html 里的兜底提示靠它来判断
+// 要不要给用户弹那张"请用本地服务器打开"的卡片。
+window.__gameBooted = true;
+
+</script>
+</body>
+</html>

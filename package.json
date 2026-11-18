@@ -1,0 +1,10 @@
+{
+  "name": "magic-tower-web",
+  "private": true,
+  "type": "module",
+  "description": "网页版魔塔。package.json 只为让 Node 能直接跑 tools/ 里的无头求解器，浏览器端完全用不到它。",
+  "scripts": {
+    "verify": "node tools/verify.js",
+    "serve": "python -m http.server 8000"
+  }
+}
