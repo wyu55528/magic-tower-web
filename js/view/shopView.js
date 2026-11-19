@@ -3,9 +3,18 @@ import { ITEMS } from '../data/items.js';
 /**
  * 商店界面。渲染进 overlay 面板，点击购买 / 按数字键购买。
  *
- * 货架上的东西买下当场生效：疗伤丹立刻回血，磨刀石 / 护心镜永久加攻加防。
- * 没有"买来存着以后再用"这一说 —— 加血只有即时性。
+ * 货架上就三样：加血、加攻、加防。每样东西买一次加固定的数，
+ * 越高层加得越多；每买一次，同一项的价格就往上抬一格。
+ * 没有库存限制，也没有"买来存着以后再用"这一说 —— 买下当场生效。
  */
+/** 这一项买一次能加多少，写成一句人话 */
+function effectText(item, amount) {
+  if (item.type === 'heal') return `生命 +${amount}`;
+  if (item.line === 'atk') return `攻击 +${amount}（永久）`;
+  if (item.line === 'def') return `防御 +${amount}（永久）`;
+  return item.desc;
+}
+
 export function renderShop(overlay, state, onBuy, onLeave) {
   overlay.innerHTML = '';
   const card = document.createElement('div');
@@ -27,14 +36,14 @@ export function renderShop(overlay, state, onBuy, onLeave) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'shop-item';
-    btn.disabled = entry.count <= 0 || state.gold < item.price;
+    btn.disabled = state.gold < entry.price;
     btn.innerHTML =
       `<span class="slot">${index + 1}</span>` +
       `<span class="bag-icon">${item.icon}</span>` +
       `<span class="shop-name">${item.name}</span>` +
-      `<span class="shop-desc">${item.desc}</span>` +
-      `<span class="shop-stock">×${entry.count}</span>` +
-      `<span class="shop-price">${item.price} 金</span>`;
+      `<span class="shop-desc">${effectText(item, entry.amount)}</span>` +
+      `<span class="shop-next">再买一次 +${entry.step} 金</span>` +
+      `<span class="shop-price">${entry.price} 金</span>`;
 
     btn.addEventListener('click', () => onBuy(entry.id));
     card.appendChild(btn);

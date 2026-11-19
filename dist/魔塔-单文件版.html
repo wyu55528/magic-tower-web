@@ -290,7 +290,7 @@ code {
 }
 
 /* ---- 商店 ---- */
-.overlay-card.shop-card { min-width: 340px; }
+.overlay-card.shop-card { min-width: 440px; max-width: 92vw; }
 .shop-card .shop-item {
   display: flex; align-items: center; gap: 8px;
   width: 100%; text-align: left;
@@ -304,10 +304,10 @@ code {
 }
 .shop-card .shop-item:hover:not(:disabled) { border-color: var(--accent); }
 .shop-card .shop-item:disabled { opacity: .42; cursor: not-allowed; }
-.shop-name { font-weight: 600; }
-.shop-desc { color: var(--muted); font-size: 12px; }
-.shop-stock { color: var(--muted); font-size: 12px; }
-.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; }
+.shop-name { font-weight: 600; white-space: nowrap; }
+.shop-desc { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.shop-next { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; white-space: nowrap; }
 
 /* ---- 弹层里的退出按钮 ---- */
 .overlay-leave { margin-top: 12px; width: 100%; }
@@ -1471,15 +1471,6 @@ function landingNear(levelIndex, stairChar) {
   return { x: spot.x, y: spot.y };
 }
 
-/** 商店货架：每家商店的货架一样，买下当场生效，不进背包 */
-const DEFAULT_SHOP_STOCK = [
-  { id: 'shop_heal_1', count: 6 },
-  { id: 'shop_heal_2', count: 6 },
-  { id: 'shop_heal_3', count: 2 },
-  { id: 'shop_atk', count: 1 },
-  { id: 'shop_def', count: 1 },
-];
-
 // ===== js/data/items.js =====
 /**
  * 道具图鉴。数值、文案、图标、价格全在这里，加道具不用改规则层。
@@ -1487,6 +1478,7 @@ const DEFAULT_SHOP_STOCK = [
  *   剑 5 档 取最高档：铁剑 +300 → 青铜剑 +900 → 白银剑 +1800 → 黄金剑 +2900 → 钻石剑 +4900
  *   盾 5 档 取最高档：木盾 +60 → 铁盾 +150 → 银盾 +300 → 黄金盾 +500 → 钻石盾 +1250
  *   生命结晶逐层加血，净增长合计 +67200
+ *   商店每家卖三样（加血 / 加攻 / 加防），买一次加固定的数，每买一次同一项就贵一格
  *   终局面板 攻击 5000 / 防御 1300，魔王战前 68000 血，打完剩 11600
  */
 const ITEMS = {
@@ -1520,12 +1512,11 @@ const ITEMS = {
   key_red:    { name: '红钥匙', short: '红', type: 'key', lock: 'red',    icon: '🔑', desc: '打开一扇红门' },
 
   // ---- 商店商品：买下当场生效，不进背包、不留存 ----
-  //   疗伤丹：血立刻涨上去；磨刀石 / 护心镜：攻击力、防御力永久加到面板上
-  shop_heal_1: { name: '疗伤丹 · 小', type: 'heal', heal: 1000, price: 500,  icon: '💊', desc: '立刻恢复 1000 点生命' },
-  shop_heal_2: { name: '疗伤丹 · 中', type: 'heal', heal: 2500, price: 1200, icon: '💊', desc: '立刻恢复 2500 点生命' },
-  shop_heal_3: { name: '疗伤丹 · 大', type: 'heal', heal: 6000, price: 2500, icon: '💊', desc: '立刻恢复 6000 点生命' },
-  shop_atk:    { name: '磨刀石',     type: 'bonus', atk: 200, price: 2000, icon: '🪨', desc: '攻击力永久 +200（买下立刻生效）' },
-  shop_def:    { name: '护心镜',     type: 'bonus', def: 100, price: 2000, icon: '🔰', desc: '防御力永久 +100（买下立刻生效）' },
+  //   加多少、价格多少都由「这家商店在第几层 + 这一项买过几次」算出来，
+  //   所以这里只放名字、种类和图标，数值在 js/data/balance.js 的 shopPlan() 里。
+  shop_heal: { name: '疗伤丹', type: 'heal',  line: 'hp',  icon: '💊', desc: '回复生命值' },
+  shop_atk:  { name: '磨刀石', type: 'bonus', line: 'atk', icon: '🪨', desc: '攻击力永久增加' },
+  shop_def:  { name: '护心镜', type: 'bonus', line: 'def', icon: '🔰', desc: '防御力永久增加' },
 };
 
 const ITEM_LIST = Object.keys(ITEMS);
@@ -1543,7 +1534,7 @@ function bagEntries(state) {
 }
 
 // ===== js/core/state.js =====
-const STATE_VERSION = 6;
+const STATE_VERSION = 7;
 
 /**
  * 基础属性。
@@ -1573,7 +1564,8 @@ function createInitialState(start) {
     openDoors: {}, // "层:x,y" -> true，已开过的门不再扣钥匙
     taken: {},     // "层:x,y" -> true，一次性效果已结算
     bonus: { atk: 0, def: 0 },   // 商店买的永久加攻/加防（直接算进面板）
-    shop: null,    // 进入商店时：{ stock: [{id,count}] }
+    bought: {},     // 商店三项各买过几次（涨价计数用）
+    shop: null,    // 进入商店时：{ stock: [{id,amount,price,step}] }
     steps: 0,
     status: 'playing', // playing | inShop | inBook | dead | win
   };
@@ -1594,6 +1586,7 @@ function cloneState(s) {
     openDoors: { ...s.openDoors },
     taken: { ...s.taken },
     bonus: { ...s.bonus },
+    bought: { ...(s.bought || {}) },
     shop: s.shop ? { stock: s.shop.stock.map((x) => ({ ...x })) } : null,
   };
 }
@@ -1697,6 +1690,33 @@ function entryPanel(floor) {
     def: defOn(below),
     hp: below <= 0 ? 800 : poolOn(below),
   };
+}
+
+/**
+ * 商店：7 家（楼层 6/10/14/18/22/26/29），每家卖同样三样东西 ——
+ *   疗伤丹（加血）、磨刀石（加攻）、护心镜（加防）。
+ *
+ * 规则：
+ *   1) 每样东西买一次加固定的数，加的数随楼层变高而变大（第 k 家商店给第 k 份量）；
+ *   2) 没有库存限制，想买多少次买多少次；
+ *   3) 每买一次，同一样东西的价格就往上抬一格（抬多少见 step），
+ *      三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
+ */
+const SHOP_FLOORS = [6, 10, 14, 18, 22, 26, 29];
+
+/**
+ * 第 floor 层那家商店卖什么。
+ * amount = 买一次加多少；base = 起步价；step = 每买一次涨价多少。
+ * 起步价也随楼层涨，但涨得比数值慢，所以越高层越划算。
+ */
+function shopPlan(floor) {
+  const k = SHOP_FLOORS.indexOf(floor) + 1;      // 第几家商店（1 起）
+  if (k < 1) return [];
+  return [
+    { id: 'shop_heal', amount: 1000 * k, base: 300 + 100 * (k - 1), step: 400 },
+    { id: 'shop_atk',  amount: 50 * k,   base: 600 + 150 * (k - 1), step: 700 },
+    { id: 'shop_def',  amount: 25 * k,   base: 400 + 120 * (k - 1), step: 500 },
+  ];
 }
 
 /**
@@ -1904,7 +1924,7 @@ function verdictText(result) {
  * 格子 -> 效果列表。
  * 所有机制（钥匙、装备、生命、商店、战斗）最终都收敛成效果，规则层只有一条执行路径。
  */
-function tileEffects(tile) {
+function tileEffects(tile, level) {
   switch (tile.t) {
     case 'item': {
       const item = ITEMS[tile.id];
@@ -1919,7 +1939,7 @@ function tileEffects(tile) {
     case 'gold':    return [{ kind: 'gold', value: tile.value }];
     case 'monster': return [{ kind: 'battle', id: tile.id }];
     case 'boss':    return [{ kind: 'battle', id: tile.id, boss: true }];
-    case 'shop':    return [{ kind: 'openShop', stock: DEFAULT_SHOP_STOCK }];
+    case 'shop':    return [{ kind: 'openShop', floor: level + 1 }];
     default:        return [];
   }
 }
@@ -1999,7 +2019,15 @@ const HANDLERS = {
 
   openShop(s, p) {
     s.status = 'inShop';
-    s.shop = { stock: (p.stock || []).map((x) => ({ ...x })) };
+    // 货架价格 = 这家商店的起步价 + 这一项已经买过几次 × 涨价步进
+    s.shop = {
+      stock: shopPlan(p.floor).map((x) => ({
+        id: x.id,
+        amount: x.amount,
+        price: x.base + (s.bought[x.id] || 0) * x.step,
+        step: x.step,
+      })),
+    };
     return {
       events: [{ text: '进入商店。', kind: 'level' }],
       interrupt: { kind: 'shop' },
@@ -2202,7 +2230,7 @@ function doMove(state, dir) {
   const tileKey = `${s.level}:${nx},${ny}`;
   if (s.taken[tileKey]) return { state: s, events };
 
-  const effects = tileEffects(target);
+  const effects = tileEffects(target, s.level);
   if (!effects.length) return { state: s, events };
 
   const result = applyEffects(s, effects, tileKey);
@@ -2219,10 +2247,11 @@ function doCloseBook(state) {
 /**
  * 买商店里的东西。
  *
- * 规则：买下当场生效，不进背包。
+ * 规则：买下当场生效，不进背包，没有库存限制。
  *   疗伤丹 —— 血立刻涨上去（血量没有上限，什么时候买都回得动）；
  *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
- * 所以商店里没有"买来存着以后再喝"的东西：加血只有即时性。
+ * 每买一次，同一项的价格就往上抬一格，抬多少由这家商店的步进决定；
+ * 三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
  */
 function doBuy(state, itemId) {
   const s = cloneState(state);
@@ -2232,37 +2261,37 @@ function doBuy(state, itemId) {
 
   const entry = s.shop.stock.find((x) => x.id === itemId);
   const item = ITEMS[itemId];
-  if (!entry || !item || entry.count <= 0) {
-    events.push({ text: '这件商品已经卖完了。', kind: 'warn' });
+  if (!entry || !item) {
+    events.push({ text: '这里没有这件商品。', kind: 'warn' });
     return { state: s, events };
   }
-  if (s.gold < item.price) {
-    events.push({ text: `金币不够，还差 ${item.price - s.gold} 枚。`, kind: 'warn' });
+  if (s.gold < entry.price) {
+    events.push({ text: `金币不够，还差 ${entry.price - s.gold} 枚。`, kind: 'warn' });
     return { state: s, events };
   }
 
-  // 回血：当场生效，不进背包。血量没有上限，什么时候买都能回。
+  // 买下当场生效，不进背包；没有库存限制，但同一项下一次买就贵一格
+  s.gold -= entry.price;
+  entry.price += entry.step;
+  s.bought[itemId] = (s.bought[itemId] || 0) + 1;
+
+  // 回血：当场生效。血量没有上限，什么时候买都能回。
   if (item.type === 'heal') {
-    s.gold -= item.price;
-    entry.count -= 1;
-    s.hp += item.heal;
-    events.push({ text: `买下 ${item.name}，恢复了 ${item.heal} 点生命。`, kind: 'heal' });
+    s.hp += entry.amount;
+    events.push({ text: `买下 ${item.name}，恢复了 ${entry.amount} 点生命。`, kind: 'heal' });
     return { state: s, events };
   }
 
   // 加攻 / 加防：永久，直接算进面板
   if (item.type === 'bonus') {
-    s.gold -= item.price;
-    entry.count -= 1;
-    if (item.atk) {
-      s.bonus.atk += item.atk;
+    if (item.line === 'atk') {
+      s.bonus.atk += entry.amount;
       recomputeStats(s);
-      events.push({ text: `买下 ${item.name}，攻击力 +${item.atk}（现在是 ${s.atk}）。`, kind: 'item' });
-    }
-    if (item.def) {
-      s.bonus.def += item.def;
+      events.push({ text: `买下 ${item.name}，攻击力 +${entry.amount}（现在是 ${s.atk}）。`, kind: 'item' });
+    } else if (item.line === 'def') {
+      s.bonus.def += entry.amount;
       recomputeStats(s);
-      events.push({ text: `买下 ${item.name}，防御力 +${item.def}（现在是 ${s.def}）。`, kind: 'item' });
+      events.push({ text: `买下 ${item.name}，防御力 +${entry.amount}（现在是 ${s.def}）。`, kind: 'item' });
     }
     return { state: s, events };
   }
@@ -2610,9 +2639,18 @@ function createLogView(el) {
 /**
  * 商店界面。渲染进 overlay 面板，点击购买 / 按数字键购买。
  *
- * 货架上的东西买下当场生效：疗伤丹立刻回血，磨刀石 / 护心镜永久加攻加防。
- * 没有"买来存着以后再用"这一说 —— 加血只有即时性。
+ * 货架上就三样：加血、加攻、加防。每样东西买一次加固定的数，
+ * 越高层加得越多；每买一次，同一项的价格就往上抬一格。
+ * 没有库存限制，也没有"买来存着以后再用"这一说 —— 买下当场生效。
  */
+/** 这一项买一次能加多少，写成一句人话 */
+function effectText(item, amount) {
+  if (item.type === 'heal') return `生命 +${amount}`;
+  if (item.line === 'atk') return `攻击 +${amount}（永久）`;
+  if (item.line === 'def') return `防御 +${amount}（永久）`;
+  return item.desc;
+}
+
 function renderShop(overlay, state, onBuy, onLeave) {
   overlay.innerHTML = '';
   const card = document.createElement('div');
@@ -2634,14 +2672,14 @@ function renderShop(overlay, state, onBuy, onLeave) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'shop-item';
-    btn.disabled = entry.count <= 0 || state.gold < item.price;
+    btn.disabled = state.gold < entry.price;
     btn.innerHTML =
       `<span class="slot">${index + 1}</span>` +
       `<span class="bag-icon">${item.icon}</span>` +
       `<span class="shop-name">${item.name}</span>` +
-      `<span class="shop-desc">${item.desc}</span>` +
-      `<span class="shop-stock">×${entry.count}</span>` +
-      `<span class="shop-price">${item.price} 金</span>`;
+      `<span class="shop-desc">${effectText(item, entry.amount)}</span>` +
+      `<span class="shop-next">再买一次 +${entry.step} 金</span>` +
+      `<span class="shop-price">${entry.price} 金</span>`;
 
     btn.addEventListener('click', () => onBuy(entry.id));
     card.appendChild(btn);

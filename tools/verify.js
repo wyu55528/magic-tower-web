@@ -10,11 +10,11 @@
  * 运行： node tools/verify.js
  * 导出通关路线： node tools/verify.js --emit
  */
-import { LEVELS, getGrid, findCharInLevel, monsterIdsOnLevel, landingNear, DEFAULT_SHOP_STOCK } from '../js/data/levels.js';
+import { LEVELS, getGrid, findCharInLevel, monsterIdsOnLevel, landingNear } from '../js/data/levels.js';
 import { ITEMS } from '../js/data/items.js';
 import { MONSTERS } from '../js/data/monsters.js';
 import { createInitialState, BASE_STATS } from '../js/core/state.js';
-import { FLOOR_DAMAGE, crystalOn } from '../js/data/balance.js';
+import { FLOOR_DAMAGE, crystalOn, shopPlan, SHOP_FLOORS } from '../js/data/balance.js';
 import { step } from '../js/core/reducer.js';
 import { resolveBattle, previewFight } from '../js/core/battle.js';
 import { writeFileSync } from 'node:fs';
@@ -781,85 +781,135 @@ function checkShopRules() {
     shopFloors.length === want.length && want.every((f) => shopFloors.includes(f)),
     shopFloors.join(','));
 
-  // 货架上的东西：回血 + 加攻 + 加防，没有"存起来以后再用"的货
-  const types = DEFAULT_SHOP_STOCK.map((s) => (ITEMS[s.id] ? ITEMS[s.id].type : '?'));
-  check('货架上有回血、加攻、加三类商品',
-    types.includes('heal') && types.includes('bonus') &&
-    types.every((t) => t === 'heal' || t === 'bonus'),
-    types.join(','));
-
-  const mkShop = (over) => {
-    const s = createInitialState(findCharInLevel(0, '@'));
-    s.status = 'inShop';
-    s.shop = { stock: DEFAULT_SHOP_STOCK.map((x) => ({ ...x })) };
-    Object.assign(s, over || {});
+  // 走进商店：走真实规则层，从隔壁那格踩上商店格
+  // st 是"进店前"的状态（可以带着之前买过的东西），所以跨商店的涨价计数能延续上
+  const enterShopAt = (st, floor) => {
+    const idx = floor - 1;
+    const grid = getGrid(idx);
+    let cell = null;
+    grid.forEach((row, y) => row.forEach((t, x) => {
+      if (t.t === 'shop' && !cell) cell = { x, y };
+    }));
+    if (!cell) return null;
+    const nb = neighborsOf(idx, cell.x, cell.y).map((k) => k.split(',').map(Number))[0];
+    if (!nb) return null;
+    const s = { ...st, level: idx, pos: { x: nb[0], y: nb[1] }, status: 'playing', shop: null };
+    const dir = DIR_NAME[(cell.x - nb[0]) + ',' + (cell.y - nb[1])];
+    return step(s, { type: 'MOVE', dir }).state;
+  };
+  const enterShop = (floor) => enterShopAt(createInitialState(findCharInLevel(0, '@')), floor);
+  const openShop = (floor, gold) => {
+    const s = enterShop(floor);
+    if (!s) return null;
+    s.gold = gold;
     return s;
   };
+  const priceOf = (st, id) => st.shop.stock.find((x) => x.id === id).price;
 
-  const healId = DEFAULT_SHOP_STOCK.find((s) => ITEMS[s.id].type === 'heal').id;
-  const healItem = ITEMS[healId];
-  const atkId = DEFAULT_SHOP_STOCK.find((s) => ITEMS[s.id].atk).id;
-  const atkItem = ITEMS[atkId];
-  const defId = DEFAULT_SHOP_STOCK.find((s) => ITEMS[s.id].def).id;
-  const defItem = ITEMS[defId];
+  const shop6 = enterShop(6);
+  const shop29 = enterShop(29);
+  check('能走进第 6 层和第 29 层的商店',
+    !!shop6 && shop6.status === 'inShop' && !!shop29 && shop29.status === 'inShop');
+  if (!shop6 || !shop29) return;
 
-  // ① 买疗伤丹：当场回血，金币扣掉，不进背包
-  const s1 = mkShop({ gold: 5000, hp: 400 });
-  const r1 = step(s1, { type: 'BUY', itemId: healId });
-  check('买疗伤丹：当场回血、金币扣掉、不进背包',
-    r1.state.hp === 400 + healItem.heal && r1.state.gold === 5000 - healItem.price &&
-    !(r1.state.bag && r1.state.bag[healId]),
-    `血量 400 → ${r1.state.hp}，金币 5000 → ${r1.state.gold}，背包 ${JSON.stringify(r1.state.bag)}`);
+  const healId = 'shop_heal', atkId = 'shop_atk', defId = 'shop_def';
+  const plan6 = shopPlan(6);
+  const healPlan = plan6.find((x) => x.id === healId);
+  const atkPlan = plan6.find((x) => x.id === atkId);
+  const defPlan = plan6.find((x) => x.id === defId);
 
-  // 血量没有上限：血再多也照加不误
-  const s1b = mkShop({ gold: 5000, hp: 999999 });
-  const r1b = step(s1b, { type: 'BUY', itemId: healId });
-  check('血量没有上限：血量再高，疗伤丹照样往上加',
-    r1b.state.hp === 999999 + healItem.heal,
-    `血量 999999 → ${r1b.state.hp}`);
+  // ① 货架上只有三样：加血、加攻、加防
+  const ids6 = shop6.shop.stock.map((x) => x.id);
+  check('商店只卖三项：加血、加攻、加防',
+    ids6.length === 3 && ids6.join(',') === 'shop_heal,shop_atk,shop_def',
+    ids6.join(','));
 
-  // ② 买磨刀石：攻击力永久加到面板上
-  const s2 = mkShop({ gold: 5000 });
-  const r2 = step(s2, { type: 'BUY', itemId: atkId });
-  check('买磨刀石：攻击力永久加到面板上、金币扣掉',
-    r2.state.atk === s2.atk + atkItem.atk && r2.state.gold === 5000 - atkItem.price &&
-    !(r2.state.bag && r2.state.bag[atkId]),
-    `攻击 ${s2.atk} → ${r2.state.atk}，金币 5000 → ${r2.state.gold}`);
+  // ② 越高层加的数越大
+  const a6 = shop6.shop.stock.map((x) => x.amount);
+  const a29 = shop29.shop.stock.map((x) => x.amount);
+  check('越高层加的数越大（第 29 层 > 第 6 层）',
+    a29.every((v, i) => v > a6[i]),
+    `第 6 层 ${a6.join('/')}，第 29 层 ${a29.join('/')}`);
 
-  // ③ 买护心镜：防御力永久加到面板上
-  const s3 = mkShop({ gold: 5000 });
-  const r3 = step(s3, { type: 'BUY', itemId: defId });
-  check('买护心镜：防御力永久加到面板上、金币扣掉',
-    r3.state.def === s3.def + defItem.def && r3.state.gold === 5000 - defItem.price &&
-    !(r3.state.bag && r3.state.bag[defId]),
-    `防御 ${s3.def} → ${r3.state.def}，金币 5000 → ${r3.state.gold}`);
-
-  // ④ 金币不够：钱和血都不动
-  const s4 = mkShop({ gold: 10, hp: 400 });
-  const r4 = step(s4, { type: 'BUY', itemId: healId });
-  check('金币不够时买不了（钱和血量都不动）',
-    r4.state.gold === 10 && r4.state.hp === 400,
-    `金币 ${r4.state.gold}，血量 ${r4.state.hp}`);
-
-  // ⑤ 没有"血满"这回事：每次买都扣钱、都回血
-  const s5 = mkShop({ gold: 5000, hp: 100 });
-  const r5 = step(s5, { type: 'BUY', itemId: healId });
-  check('没有"血满"这回事：买疗伤丹每次都扣钱、都回血',
-    r5.state.gold === 5000 - healItem.price && r5.state.hp === 100 + healItem.heal,
-    `金币 ${r5.state.gold}，血量 ${r5.state.hp}`);
-
-  // ⑥ 库存有限：卖完就买不到了
-  let s6 = mkShop({ gold: 999999 });
-  const cnt = DEFAULT_SHOP_STOCK.find((s) => s.id === atkId).count;
-  let last = null;
-  for (let i = 0; i < cnt + 1; i++) {
-    const res = step(s6, { type: 'BUY', itemId: atkId });
-    s6 = res.state;
-    last = res;
+  let mono = true;
+  for (let i = 1; i < SHOP_FLOORS.length; i++) {
+    const a = shopPlan(SHOP_FLOORS[i - 1]).map((x) => x.amount);
+    const b = shopPlan(SHOP_FLOORS[i]).map((x) => x.amount);
+    if (!b.every((v, j) => v > a[j])) mono = false;
   }
-  check('同一种商品卖完就买不到了',
-    last.events.some((e) => e.text.includes('卖完')),
-    last.events.map((e) => e.text).join(' | '));
+  check('七家商店的加成逐层递增', mono);
+
+  // ③ 买加血：当场回血、金币扣掉、不进背包
+  const s1 = openShop(6, 5000);
+  const r1 = step(s1, { type: 'BUY', itemId: healId });
+  check('买加血：当场回血、金币扣掉、不进背包',
+    r1.state.hp === s1.hp + healPlan.amount && r1.state.gold === 5000 - healPlan.base &&
+    !(r1.state.bag && r1.state.bag[healId]),
+    `血量 ${s1.hp} → ${r1.state.hp}，金币 5000 → ${r1.state.gold}`);
+
+  // ④ 同一项每买一次就贵一格（线性涨价）
+  let cur = openShop(6, 999999);
+  const prices = [priceOf(cur, healId)];
+  for (let i = 0; i < 3; i++) {
+    cur = step(cur, { type: 'BUY', itemId: healId }).state;
+    prices.push(priceOf(cur, healId));
+  }
+  check('同一项每买一次就贵一格（线性涨价）',
+    prices[0] === healPlan.base && prices[1] === healPlan.base + healPlan.step &&
+    prices[2] === healPlan.base + 2 * healPlan.step && prices[3] === healPlan.base + 3 * healPlan.step,
+    prices.join(' → '));
+
+  // ⑤ 没有库存限制：想买多少次买多少次
+  let c3 = openShop(6, 999999);
+  let bought12 = 0;
+  for (let i = 0; i < 12; i++) {
+    const res = step(c3, { type: 'BUY', itemId: atkId });
+    c3 = res.state;
+    if (res.events.some((e) => e.kind === 'item')) bought12++;
+  }
+  check('没有库存限制：连买 12 次都买得到',
+    bought12 === 12 && priceOf(c3, atkId) === atkPlan.base + 12 * atkPlan.step,
+    `买了 ${bought12} 次，价格 ${priceOf(c3, atkId)}`);
+
+  // ⑥ 三个计数器各算各的
+  const s4 = openShop(6, 999999);
+  const defBefore = priceOf(s4, defId);
+  const c4 = step(s4, { type: 'BUY', itemId: healId }).state;
+  check('买了加血不影响加攻、加防的价格',
+    priceOf(c4, defId) === defBefore && priceOf(c4, atkId) === atkPlan.base,
+    `加防 ${defBefore} → ${priceOf(c4, defId)}，加攻 ${priceOf(c4, atkId)}`);
+
+  // ⑦ 涨价计数跨商店连着算：第 6 层买过一次加攻，第 10 层再买就贵一格
+  const s5 = openShop(6, 999999);
+  const c5 = step(s5, { type: 'BUY', itemId: atkId }).state;
+  const plan10 = shopPlan(10).find((x) => x.id === atkId);
+  const s5b = enterShopAt(c5, 10);
+  check('涨价计数跨商店连着算（第 10 层的加攻比起步价贵一格）',
+    !!s5b && s5b.status === 'inShop' && priceOf(s5b, atkId) === plan10.base + atkPlan.step,
+    `第 10 层加攻 ${s5b ? priceOf(s5b, atkId) : '进不去'}，起步价 ${plan10.base}`);
+
+  // ⑧ 加攻 / 加防永久加到面板上
+  const s6 = openShop(6, 999999);
+  const r6 = step(s6, { type: 'BUY', itemId: atkId });
+  check('买加攻：攻击力永久加到面板上',
+    r6.state.atk === s6.atk + atkPlan.amount, `攻击 ${s6.atk} → ${r6.state.atk}`);
+  const r6b = step(r6.state, { type: 'BUY', itemId: defId });
+  check('买加防：防御力永久加到面板上',
+    r6b.state.def === r6.state.def + defPlan.amount, `防御 ${r6.state.def} → ${r6b.state.def}`);
+
+  // ⑨ 血量没有上限：血再多也照加不误
+  const s7 = openShop(6, 5000);
+  s7.hp = 999999;
+  const r7 = step(s7, { type: 'BUY', itemId: healId });
+  check('血量没有上限：血量再高，加血照样往上加',
+    r7.state.hp === 999999 + healPlan.amount, `血量 999999 → ${r7.state.hp}`);
+
+  // ⑩ 金币不够：钱和血都不动
+  const s8 = openShop(6, 10);
+  const r8 = step(s8, { type: 'BUY', itemId: healId });
+  check('金币不够时买不了（钱和血量都不动）',
+    r8.state.gold === 10 && r8.state.hp === s8.hp,
+    `金币 ${r8.state.gold}，血量 ${r8.state.hp}`);
 }
 
 /* ------------------------------------------------------------------ */

@@ -944,12 +944,3 @@ export function landingNear(levelIndex, stairChar) {
   const spot = plain || cand[0];
   return { x: spot.x, y: spot.y };
 }
-
-/** 商店货架：每家商店的货架一样，买下当场生效，不进背包 */
-export const DEFAULT_SHOP_STOCK = [
-  { id: 'shop_heal_1', count: 6 },
-  { id: 'shop_heal_2', count: 6 },
-  { id: 'shop_heal_3', count: 2 },
-  { id: 'shop_atk', count: 1 },
-  { id: 'shop_def', count: 1 },
-];

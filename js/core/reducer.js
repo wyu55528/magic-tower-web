@@ -151,7 +151,7 @@ function doMove(state, dir) {
   const tileKey = `${s.level}:${nx},${ny}`;
   if (s.taken[tileKey]) return { state: s, events };
 
-  const effects = tileEffects(target);
+  const effects = tileEffects(target, s.level);
   if (!effects.length) return { state: s, events };
 
   const result = applyEffects(s, effects, tileKey);
@@ -168,10 +168,11 @@ function doCloseBook(state) {
 /**
  * 买商店里的东西。
  *
- * 规则：买下当场生效，不进背包。
+ * 规则：买下当场生效，不进背包，没有库存限制。
  *   疗伤丹 —— 血立刻涨上去（血量没有上限，什么时候买都回得动）；
  *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
- * 所以商店里没有"买来存着以后再喝"的东西：加血只有即时性。
+ * 每买一次，同一项的价格就往上抬一格，抬多少由这家商店的步进决定；
+ * 三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
  */
 function doBuy(state, itemId) {
   const s = cloneState(state);
@@ -181,37 +182,37 @@ function doBuy(state, itemId) {
 
   const entry = s.shop.stock.find((x) => x.id === itemId);
   const item = ITEMS[itemId];
-  if (!entry || !item || entry.count <= 0) {
-    events.push({ text: '这件商品已经卖完了。', kind: 'warn' });
+  if (!entry || !item) {
+    events.push({ text: '这里没有这件商品。', kind: 'warn' });
     return { state: s, events };
   }
-  if (s.gold < item.price) {
-    events.push({ text: `金币不够，还差 ${item.price - s.gold} 枚。`, kind: 'warn' });
+  if (s.gold < entry.price) {
+    events.push({ text: `金币不够，还差 ${entry.price - s.gold} 枚。`, kind: 'warn' });
     return { state: s, events };
   }
 
-  // 回血：当场生效，不进背包。血量没有上限，什么时候买都能回。
+  // 买下当场生效，不进背包；没有库存限制，但同一项下一次买就贵一格
+  s.gold -= entry.price;
+  entry.price += entry.step;
+  s.bought[itemId] = (s.bought[itemId] || 0) + 1;
+
+  // 回血：当场生效。血量没有上限，什么时候买都能回。
   if (item.type === 'heal') {
-    s.gold -= item.price;
-    entry.count -= 1;
-    s.hp += item.heal;
-    events.push({ text: `买下 ${item.name}，恢复了 ${item.heal} 点生命。`, kind: 'heal' });
+    s.hp += entry.amount;
+    events.push({ text: `买下 ${item.name}，恢复了 ${entry.amount} 点生命。`, kind: 'heal' });
     return { state: s, events };
   }
 
   // 加攻 / 加防：永久，直接算进面板
   if (item.type === 'bonus') {
-    s.gold -= item.price;
-    entry.count -= 1;
-    if (item.atk) {
-      s.bonus.atk += item.atk;
+    if (item.line === 'atk') {
+      s.bonus.atk += entry.amount;
       recomputeStats(s);
-      events.push({ text: `买下 ${item.name}，攻击力 +${item.atk}（现在是 ${s.atk}）。`, kind: 'item' });
-    }
-    if (item.def) {
-      s.bonus.def += item.def;
+      events.push({ text: `买下 ${item.name}，攻击力 +${entry.amount}（现在是 ${s.atk}）。`, kind: 'item' });
+    } else if (item.line === 'def') {
+      s.bonus.def += entry.amount;
       recomputeStats(s);
-      events.push({ text: `买下 ${item.name}，防御力 +${item.def}（现在是 ${s.def}）。`, kind: 'item' });
+      events.push({ text: `买下 ${item.name}，防御力 +${entry.amount}（现在是 ${s.def}）。`, kind: 'item' });
     }
     return { state: s, events };
   }

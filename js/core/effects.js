@@ -1,7 +1,7 @@
 import { ITEMS } from '../data/items.js';
 import { MONSTERS } from '../data/monsters.js';
 import { LOCK_NAMES } from '../data/tiles.js';
-import { DEFAULT_SHOP_STOCK } from '../data/levels.js';
+import { shopPlan } from '../data/balance.js';
 import { BASE_STATS } from './state.js';
 import { resolveBattle } from './battle.js';
 
@@ -9,7 +9,7 @@ import { resolveBattle } from './battle.js';
  * 格子 -> 效果列表。
  * 所有机制（钥匙、装备、生命、商店、战斗）最终都收敛成效果，规则层只有一条执行路径。
  */
-export function tileEffects(tile) {
+export function tileEffects(tile, level) {
   switch (tile.t) {
     case 'item': {
       const item = ITEMS[tile.id];
@@ -24,7 +24,7 @@ export function tileEffects(tile) {
     case 'gold':    return [{ kind: 'gold', value: tile.value }];
     case 'monster': return [{ kind: 'battle', id: tile.id }];
     case 'boss':    return [{ kind: 'battle', id: tile.id, boss: true }];
-    case 'shop':    return [{ kind: 'openShop', stock: DEFAULT_SHOP_STOCK }];
+    case 'shop':    return [{ kind: 'openShop', floor: level + 1 }];
     default:        return [];
   }
 }
@@ -104,7 +104,15 @@ const HANDLERS = {
 
   openShop(s, p) {
     s.status = 'inShop';
-    s.shop = { stock: (p.stock || []).map((x) => ({ ...x })) };
+    // 货架价格 = 这家商店的起步价 + 这一项已经买过几次 × 涨价步进
+    s.shop = {
+      stock: shopPlan(p.floor).map((x) => ({
+        id: x.id,
+        amount: x.amount,
+        price: x.base + (s.bought[x.id] || 0) * x.step,
+        step: x.step,
+      })),
+    };
     return {
       events: [{ text: '进入商店。', kind: 'level' }],
       interrupt: { kind: 'shop' },

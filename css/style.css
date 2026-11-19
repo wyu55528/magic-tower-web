@@ -283,7 +283,7 @@ code {
 }
 
 /* ---- 商店 ---- */
-.overlay-card.shop-card { min-width: 340px; }
+.overlay-card.shop-card { min-width: 440px; max-width: 92vw; }
 .shop-card .shop-item {
   display: flex; align-items: center; gap: 8px;
   width: 100%; text-align: left;
@@ -297,10 +297,10 @@ code {
 }
 .shop-card .shop-item:hover:not(:disabled) { border-color: var(--accent); }
 .shop-card .shop-item:disabled { opacity: .42; cursor: not-allowed; }
-.shop-name { font-weight: 600; }
-.shop-desc { color: var(--muted); font-size: 12px; }
-.shop-stock { color: var(--muted); font-size: 12px; }
-.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; }
+.shop-name { font-weight: 600; white-space: nowrap; }
+.shop-desc { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.shop-next { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.shop-price { margin-left: auto; color: #ffd479; font-weight: 600; white-space: nowrap; }
 
 /* ---- 弹层里的退出按钮 ---- */
 .overlay-leave { margin-top: 12px; width: 100%; }

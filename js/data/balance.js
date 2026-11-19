@@ -99,6 +99,33 @@ export function entryPanel(floor) {
 }
 
 /**
+ * 商店：7 家（楼层 6/10/14/18/22/26/29），每家卖同样三样东西 ——
+ *   疗伤丹（加血）、磨刀石（加攻）、护心镜（加防）。
+ *
+ * 规则：
+ *   1) 每样东西买一次加固定的数，加的数随楼层变高而变大（第 k 家商店给第 k 份量）；
+ *   2) 没有库存限制，想买多少次买多少次；
+ *   3) 每买一次，同一样东西的价格就往上抬一格（抬多少见 step），
+ *      三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
+ */
+export const SHOP_FLOORS = [6, 10, 14, 18, 22, 26, 29];
+
+/**
+ * 第 floor 层那家商店卖什么。
+ * amount = 买一次加多少；base = 起步价；step = 每买一次涨价多少。
+ * 起步价也随楼层涨，但涨得比数值慢，所以越高层越划算。
+ */
+export function shopPlan(floor) {
+  const k = SHOP_FLOORS.indexOf(floor) + 1;      // 第几家商店（1 起）
+  if (k < 1) return [];
+  return [
+    { id: 'shop_heal', amount: 1000 * k, base: 300 + 100 * (k - 1), step: 400 },
+    { id: 'shop_atk',  amount: 50 * k,   base: 600 + 150 * (k - 1), step: 700 },
+    { id: 'shop_def',  amount: 25 * k,   base: 400 + 120 * (k - 1), step: 500 },
+  ];
+}
+
+/**
  * 巡逻怪：站在通路上拦路的怪（不是守在死胡同门口的那种）。
  * 数量随层数往上加，后半程路上基本一步一兵。
  */

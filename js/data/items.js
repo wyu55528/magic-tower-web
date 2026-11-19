@@ -4,6 +4,7 @@
  *   剑 5 档 取最高档：铁剑 +300 → 青铜剑 +900 → 白银剑 +1800 → 黄金剑 +2900 → 钻石剑 +4900
  *   盾 5 档 取最高档：木盾 +60 → 铁盾 +150 → 银盾 +300 → 黄金盾 +500 → 钻石盾 +1250
  *   生命结晶逐层加血，净增长合计 +67200
+ *   商店每家卖三样（加血 / 加攻 / 加防），买一次加固定的数，每买一次同一项就贵一格
  *   终局面板 攻击 5000 / 防御 1300，魔王战前 68000 血，打完剩 11600
  */
 export const ITEMS = {
@@ -37,12 +38,11 @@ export const ITEMS = {
   key_red:    { name: '红钥匙', short: '红', type: 'key', lock: 'red',    icon: '🔑', desc: '打开一扇红门' },
 
   // ---- 商店商品：买下当场生效，不进背包、不留存 ----
-  //   疗伤丹：血立刻涨上去；磨刀石 / 护心镜：攻击力、防御力永久加到面板上
-  shop_heal_1: { name: '疗伤丹 · 小', type: 'heal', heal: 1000, price: 500,  icon: '💊', desc: '立刻恢复 1000 点生命' },
-  shop_heal_2: { name: '疗伤丹 · 中', type: 'heal', heal: 2500, price: 1200, icon: '💊', desc: '立刻恢复 2500 点生命' },
-  shop_heal_3: { name: '疗伤丹 · 大', type: 'heal', heal: 6000, price: 2500, icon: '💊', desc: '立刻恢复 6000 点生命' },
-  shop_atk:    { name: '磨刀石',     type: 'bonus', atk: 200, price: 2000, icon: '🪨', desc: '攻击力永久 +200（买下立刻生效）' },
-  shop_def:    { name: '护心镜',     type: 'bonus', def: 100, price: 2000, icon: '🔰', desc: '防御力永久 +100（买下立刻生效）' },
+  //   加多少、价格多少都由「这家商店在第几层 + 这一项买过几次」算出来，
+  //   所以这里只放名字、种类和图标，数值在 js/data/balance.js 的 shopPlan() 里。
+  shop_heal: { name: '疗伤丹', type: 'heal',  line: 'hp',  icon: '💊', desc: '回复生命值' },
+  shop_atk:  { name: '磨刀石', type: 'bonus', line: 'atk', icon: '🪨', desc: '攻击力永久增加' },
+  shop_def:  { name: '护心镜', type: 'bonus', line: 'def', icon: '🔰', desc: '防御力永久增加' },
 };
 
 export const ITEM_LIST = Object.keys(ITEMS);

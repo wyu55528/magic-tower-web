@@ -29,7 +29,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SWORDS, SHIELDS, FLOOR_COUNT, atkOn, defOn, crystalOn, patrolCount } from '../js/data/balance.js';
+import { SWORDS, SHIELDS, FLOOR_COUNT, SHOP_FLOORS, atkOn, defOn, crystalOn, patrolCount } from '../js/data/balance.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LEVELS_FILE = join(ROOT, 'js', 'data', 'levels.js');
@@ -48,7 +48,6 @@ const FLOOR_NAMES = [
 
 // 剑 / 盾 / 生命结晶的档位表在 js/data/balance.js 里，
 // 那里是全塔唯一的数值来源，生成器和怪物表都从那儿取数。
-const SHOP_FLOORS = [6, 10, 14, 18, 22, 26, 29];
 const BOOK_FLOOR = 1;
 const WARP_FLOOR = 15;
 const LOCKS = ['yellow', 'blue', 'red'];
