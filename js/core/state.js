@@ -1,11 +1,12 @@
-export const STATE_VERSION = 5;
+export const STATE_VERSION = 6;
 
 /**
  * 基础属性。
- * 武器和防具是"取最高档替换"（低档拾取无效），
- * 生命结晶是在生命上限上"累加"，所以上限类道具只有一条线。
+ * 武器和防具是"取最高档替换"（低档拾取无效）。
+ * 血量没有上限：hp 就是身上所有的血，捡生命结晶、买疗伤丹把它加上去，
+ * 战斗只把它减下来。
  */
-export const BASE_STATS = { atk: 100, def: 50, maxHp: 800 };
+export const BASE_STATS = { atk: 100, def: 50, hp: 800 };
 
 /** 新游戏初始状态。pos 由关卡的出生点填入。 */
 export function createInitialState(start) {
@@ -13,8 +14,7 @@ export function createInitialState(start) {
     version: STATE_VERSION,
     level: 0,
     pos: { x: start.x, y: start.y },
-    hp: BASE_STATS.maxHp,
-    maxHp: BASE_STATS.maxHp,
+    hp: BASE_STATS.hp,
     atk: BASE_STATS.atk,
     def: BASE_STATS.def,
     gold: 0,

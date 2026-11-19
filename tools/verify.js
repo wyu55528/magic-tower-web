@@ -14,6 +14,7 @@ import { LEVELS, getGrid, findCharInLevel, monsterIdsOnLevel, landingNear, DEFAU
 import { ITEMS } from '../js/data/items.js';
 import { MONSTERS } from '../js/data/monsters.js';
 import { createInitialState, BASE_STATS } from '../js/core/state.js';
+import { FLOOR_DAMAGE, crystalOn } from '../js/data/balance.js';
 import { step } from '../js/core/reducer.js';
 import { resolveBattle, previewFight } from '../js/core/battle.js';
 import { writeFileSync } from 'node:fs';
@@ -21,8 +22,8 @@ import { writeFileSync } from 'node:fs';
 const DIRS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const DIR_NAME = { '0,-1': 'up', '0,1': 'down', '-1,0': 'left', '1,0': 'right' };
 
-/** 设计目标：终局面板与魔王参数 */
-const TARGET = { atk: 5000, def: 1300, maxHp: 68000 };
+/** 设计目标：终局面板与魔王参数（hp = 魔王战开打前身上的血） */
+const TARGET = { atk: 5000, def: 1300, hp: 68000 };
 const WARP_FLOOR = 15;              // 传送卷轴所在的层号（1 起）
 
 let failures = [];
@@ -198,8 +199,11 @@ function checkLevels() {
     swordTiers.map((v) => `${v.tier}档+${v.value}@${v.floor}层`).join(' '));
   check('盾的 5 档档位连续且数值递增', shieldsOk,
     shieldTiers.map((v) => `${v.tier}档+${v.value}@${v.floor}层`).join(' '));
-  check(`基础面板 攻击 ${BASE_STATS.atk} / 防御 ${BASE_STATS.def} / 生命 ${BASE_STATS.maxHp}`,
-    BASE_STATS.atk === 100 && BASE_STATS.def === 50 && BASE_STATS.maxHp === 800);
+  check(`基础面板 攻击 ${BASE_STATS.atk} / 防御 ${BASE_STATS.def} / 生命 ${BASE_STATS.hp}`,
+    BASE_STATS.atk === 100 && BASE_STATS.def === 50 && BASE_STATS.hp === 800);
+  check('血量没有上限：状态里不存在 maxHp 这个字段',
+    !('maxHp' in createInitialState(findCharInLevel(0, '@'))) && !('maxHp' in BASE_STATS),
+    'BASE_STATS: ' + Object.keys(BASE_STATS).join(','));
 
   // ---- 关键奖励必须在死胡同里 ----
   const probe = createInitialState(findCharInLevel(0, '@'));
@@ -629,7 +633,7 @@ function checkStairLanding() {
 function checkBattleRules() {
   console.log('\n=== 1f. 战斗结算 ===');
 
-  const base = { hp: 800, maxHp: 800, atk: 100, def: 50 };
+  const base = { hp: 800, atk: 100, def: 50 };
   const guard = MONSTERS.guard_1;          // 第 1 层守关怪 2820/92/24
   const patrol = MONSTERS.patrol_1;        // 第 1 层巡逻怪 460/66/8
 
@@ -644,7 +648,7 @@ function checkBattleRules() {
     `结束 ${lose.hpLeft} 血`);
 
   // ③ 受伤进场打完也不会比开打时血多
-  const hurt = { hp: 200, maxHp: 800, atk: 400, def: 50 };
+  const hurt = { hp: 200, atk: 400, def: 50 };
   const weak = { name: '测试怪', hp: 800, atk: 100, def: 10, gold: 0 };
   const hurtFight = resolveBattle(hurt, weak);
   check('受伤进场打完也不会比开打时血多',
@@ -655,12 +659,12 @@ function checkBattleRules() {
   check('图鉴说不可战胜的怪，真打确实赢不了',
     look.verdict === 'unsolvable' && !lose.win, JSON.stringify(look));
 
-  // ⑤ 魔王战满血裸打就能赢
+  // ⑤ 魔王战按设计血量裸打就能赢
   const boss = previewFight(
-    { hp: TARGET.maxHp, maxHp: TARGET.maxHp, atk: TARGET.atk, def: TARGET.def },
+    { hp: TARGET.hp, atk: TARGET.atk, def: TARGET.def },
     MONSTERS.demon_king
   );
-  check('魔王战满血裸打就能赢',
+  check('魔王战拿 68000 血裸打就能赢',
     boss.verdict === 'damage' && boss.loss === 56400,
     JSON.stringify(boss));
 }
@@ -706,15 +710,15 @@ function checkNoPotions() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 1h. 回血只有两处：生命结晶（捡到即满）和魔王房的门                       */
+/* 1h. 血量没有上限：生命结晶直接加血                                     */
 /* ------------------------------------------------------------------ */
 
 function checkHealRules() {
-  console.log('\n=== 1h. 回血规则 ===');
+  console.log('\n=== 1h. 血量规则 ===');
 
   const dirTo = (from, to) => DIR_NAME[(to.x - from.x) + ',' + (to.y - from.y)];
 
-  // ① 捡到生命结晶：上限抬高，血量回满
+  // ① 捡到生命结晶：血量直接涨上去，涨多少就是结晶给多少
   const g0 = getGrid(0);
   let crystal = null, imp = null;
   g0.forEach((row, y) => row.forEach((t, x) => {
@@ -732,13 +736,14 @@ function checkHealRules() {
       st.hp = 300;                       // 故意带着残血去捡
       const r1 = step(st, { type: 'MOVE', dir: dirTo(st.pos, imp) });
       const r2 = step(r1.state, { type: 'MOVE', dir: dirTo(r1.state.pos, crystal) });
-      check('捡到生命结晶：生命上限抬高，血量回到满',
-        r2.state.maxHp === 1400 && r2.state.hp === 1400,
-        `上限 ${st.maxHp} → ${r2.state.maxHp}，血量 300 → ${r2.state.hp}`);
+      const gain = crystalOn(1);
+      check('捡到生命结晶：血量直接涨上去，没有上限',
+        r2.state.hp === r1.state.hp + gain && !('maxHp' in r2.state),
+        `血量 ${r1.state.hp} → ${r2.state.hp}（结晶 +${gain}）`);
     }
   }
 
-  // ② 推开魔王房的门：血量先回到上限，再开打
+  // ② 推开魔王房的门：不再回血（没有"满"可回），直接开打
   const boss = findCharInLevel(LEVELS.length - 1, 'X');
   check('第 30 层找得到魔王', !!boss);
   if (boss) {
@@ -746,13 +751,12 @@ function checkHealRules() {
       .map((k) => k.split(',').map(Number))[0];
     const st = createInitialState({ x: mouth[0], y: mouth[1] });
     st.level = LEVELS.length - 1;
-    st.maxHp = TARGET.maxHp; st.hp = 20000;
+    st.hp = TARGET.hp;
     st.atk = TARGET.atk; st.def = TARGET.def;
     const r = step(st, { type: 'MOVE', dir: dirTo(st.pos, boss) });
-    const healed = r.events.some((e) => e.text.includes('血量回到'));
-    check('推开魔王房的门：血量先回满，再开打',
-      healed && r.state.maxHp === TARGET.maxHp && r.state.hp === 11600,
-      `进门 20000 → 打完 ${r.state.hp}，上限 ${r.state.maxHp}`);
+    check('推开魔王房的门：不再回血，直接开打',
+      r.state.hp === 11600 && !r.events.some((e) => e.text.includes('血量回到')),
+      `进门 ${TARGET.hp} → 打完 ${r.state.hp}`);
     check('魔王战打 48 回合、挨 56400 点伤害后还剩 11600 血',
       r.state.status === 'win' && r.state.hp === 11600,
       `状态 ${r.state.status}，剩 ${r.state.hp} 血`);
@@ -800,19 +804,19 @@ function checkShopRules() {
   const defItem = ITEMS[defId];
 
   // ① 买疗伤丹：当场回血，金币扣掉，不进背包
-  const s1 = mkShop({ gold: 5000, hp: 400, maxHp: 3000 });
+  const s1 = mkShop({ gold: 5000, hp: 400 });
   const r1 = step(s1, { type: 'BUY', itemId: healId });
   check('买疗伤丹：当场回血、金币扣掉、不进背包',
     r1.state.hp === 400 + healItem.heal && r1.state.gold === 5000 - healItem.price &&
     !(r1.state.bag && r1.state.bag[healId]),
     `血量 400 → ${r1.state.hp}，金币 5000 → ${r1.state.gold}，背包 ${JSON.stringify(r1.state.bag)}`);
 
-  // 回血不会超过生命上限
-  const s1b = mkShop({ gold: 5000, hp: 400, maxHp: 800 });
+  // 血量没有上限：血再多也照加不误
+  const s1b = mkShop({ gold: 5000, hp: 999999 });
   const r1b = step(s1b, { type: 'BUY', itemId: healId });
-  check('疗伤丹不会把血加过生命上限',
-    r1b.state.hp === 800 && r1b.state.gold === 5000 - healItem.price,
-    `血量 400 → ${r1b.state.hp}（上限 800），金币 ${r1b.state.gold}`);
+  check('血量没有上限：血量再高，疗伤丹照样往上加',
+    r1b.state.hp === 999999 + healItem.heal,
+    `血量 999999 → ${r1b.state.hp}`);
 
   // ② 买磨刀石：攻击力永久加到面板上
   const s2 = mkShop({ gold: 5000 });
@@ -837,12 +841,11 @@ function checkShopRules() {
     r4.state.gold === 10 && r4.state.hp === 400,
     `金币 ${r4.state.gold}，血量 ${r4.state.hp}`);
 
-  // ⑤ 血量已满：买药没意义，不扣钱
-  const s5 = mkShop({ gold: 5000 });
-  s5.hp = s5.maxHp;
+  // ⑤ 没有"血满"这回事：每次买都扣钱、都回血
+  const s5 = mkShop({ gold: 5000, hp: 100 });
   const r5 = step(s5, { type: 'BUY', itemId: healId });
-  check('血量已满时买疗伤丹：不扣钱',
-    r5.state.gold === 5000 && r5.state.hp === s5.maxHp,
+  check('没有"血满"这回事：买疗伤丹每次都扣钱、都回血',
+    r5.state.gold === 5000 - healItem.price && r5.state.hp === 100 + healItem.heal,
     `金币 ${r5.state.gold}，血量 ${r5.state.hp}`);
 
   // ⑥ 库存有限：卖完就买不到了
@@ -868,12 +871,14 @@ let shopDone = new Set();   // 已经进过的商店（参考路线只看不买�
 const hpUpViolations = [];   // 血量只该往下掉（生命结晶和魔王房的门除外）
 const bagViolations = [];    // 背包里只该有图鉴和卷轴
 const route = [];
-let bookStep = -1;   // 捡到怪物图鉴书时的动作序号（-1 = 这条路线没捡到）
+const dmgByLevel = {};
+let bookStep = -1;
+let bossEntryHp = 0;   // 魔王战开打前身上的血   // 捡到怪物图鉴书时的动作序号（-1 = 这条路线没捡到）
 
 function canSurvive(monsterId) {
   const mon = MONSTERS[monsterId];
   const res = resolveBattle(
-    { hp: state.hp, maxHp: state.maxHp, atk: state.atk, def: state.def },
+    { hp: state.hp, atk: state.atk, def: state.def },
     mon
   );
   return res.win;
@@ -1000,7 +1005,7 @@ function solve() {
   while (state.status !== 'win') {
     if (++iterations > 40000) {
       console.log(trace.join('\n'));
-      throw new Error(`求解器迭代超限：第 ${state.level + 1} 层，位置 (${state.pos.x},${state.pos.y})，血量 ${state.hp}/${state.maxHp}`);
+      throw new Error(`求解器迭代超限：第 ${state.level + 1} 层，位置 (${state.pos.x},${state.pos.y})，血量 ${state.hp}`);
     }
     if (state.status === 'dead') {
       throw new Error(`第 ${state.level + 1} 层阵亡于 (${state.pos.x},${state.pos.y})`);
@@ -1016,7 +1021,7 @@ function solve() {
       lastLevel = state.level;
       report.push({
         level: state.level,
-        atk: state.atk, def: state.def, hp: state.hp, maxHp: state.maxHp,
+        atk: state.atk, def: state.def, hp: state.hp,
         gold: state.gold, steps: state.steps,
       });
     }
@@ -1043,7 +1048,7 @@ function solve() {
       console.log('  已发生事件：' + journal.slice(-30).join(' / '));
       console.log('  目标清单：' + (dump || '(空)'));
       console.log('  危险怪：' + [...dangerous].join(',') + '  钥匙：' + JSON.stringify(state.keys));
-      throw new Error(`第 ${state.level + 1} 层没有可达目标（位置 ${state.pos.x},${state.pos.y}，血量 ${state.hp}/${state.maxHp}）`);
+      throw new Error(`第 ${state.level + 1} 层没有可达目标（位置 ${state.pos.x},${state.pos.y}，血量 ${state.hp}）`);
     }
 
     if (best.path.length === 0 && best.target.kind !== 'stair') {
@@ -1057,11 +1062,12 @@ function solve() {
     for (const next of best.path) {
       const t = getGrid(state.level)[next.y][next.x];
       if (t.t === 'boss' && !state.taken[state.level + ':' + next.x + ',' + next.y]) {
+        bossEntryHp = state.hp;
         if (!canSurvive(t.id)) {
           console.log('  背包：' + JSON.stringify(state.bag) + '  金币：' + state.gold);
           console.log('  各层结束时：');
-          report.forEach((r) => console.log(`    第 ${r.level + 1} 层  血 ${r.hp}/${r.maxHp}  金币 ${r.gold}`));
-          throw new Error(`打不过魔王：当前 ${state.hp}/${state.maxHp} 血、攻击 ${state.atk}、防御 ${state.def}`);
+          report.forEach((r) => console.log(`    第 ${r.level + 1} 层  血 ${r.hp}  金币 ${r.gold}`));
+          throw new Error(`打不过魔王：当前 ${state.hp} 血、攻击 ${state.atk}、防御 ${state.def}`);
         }
       }
       const dx = next.x - state.pos.x, dy = next.y - state.pos.y;
@@ -1070,11 +1076,11 @@ function solve() {
       const mv = step(state, { type: 'MOVE', dir: DIR_NAME[dx + ',' + dy] });
       for (const ev of mv.events) journal.push(`L${state.level + 1} ${ev.text}`);
       state = mv.state;
+      if (state.hp < hpBefore) dmgByLevel[state.level] = (dmgByLevel[state.level] || 0) + (hpBefore - state.hp);
       // 血量只该往下掉：只有捡生命结晶、推开魔王房的门才会涨
       if (state.hp > hpBefore) {
         const isCrystal = t.t === 'item' && ITEMS[t.id] && ITEMS[t.id].type === 'heart';
-        const isBoss = t.t === 'boss';
-        if (!isCrystal && !isBoss) {
+        if (!isCrystal) {
           hpUpViolations.push(`第 ${state.level + 1} 层 (${next.x},${next.y}) 血量 ${hpBefore} → ${state.hp}`);
         }
       }
@@ -1093,12 +1099,12 @@ function solve() {
     }
   }
 
-  console.log('\n  层 | 攻击 | 防御 |  生命  | 金币 | 累计步数');
+  console.log('\n  层 | 攻击 | 防御 |   生命 | 金币 | 累计步数');
   console.log('  ---+-----+------+-------+------+---------');
   for (const r of report) {
     console.log(
       `  ${String(r.level + 1).padStart(2)} | ${String(r.atk).padStart(4)} | ${String(r.def).padStart(4)} | ` +
-      `${String(r.hp + '/' + r.maxHp).padStart(7)} | ${String(r.gold).padStart(4)} | ${String(r.steps).padStart(6)}`
+      `${String(r.hp).padStart(7)} | ${String(r.gold).padStart(4)} | ${String(r.steps).padStart(6)}`
     );
   }
 
@@ -1108,13 +1114,13 @@ function solve() {
   const bDmg = Math.max(1, mon.atk - state.def);
 
   console.log('\n  --- 魔王战验算 ---');
-  console.log(`  玩家面板：攻击 ${state.atk} / 防御 ${state.def} / 生命 ${state.hp}/${state.maxHp}`);
+  console.log(`  玩家面板：攻击 ${state.atk} / 防御 ${state.def} / 生命 ${state.hp}`);
   console.log(`  每回合输出 ${pDmg}（=${state.atk}-${mon.def}），击杀需 ${rounds} 回合`);
   console.log(`  魔王每回合 ${bDmg}（=${mon.atk}-${state.def}），反击 ${rounds - 1} 次共 ${bDmg * (rounds - 1)} 伤害`);
-  console.log(`  通关剩余生命：${state.hp}/${state.maxHp}`);
+  console.log(`  通关剩余生命：${state.hp}`);
   console.log(`  通关总步数：${state.steps}，金币：${state.gold}`);
 
-  return { state, report, rounds, bossDamage: bDmg * (rounds - 1), bookStep };
+  return { state, report, rounds, bossDamage: bDmg * (rounds - 1), bookStep, bossEntryHp, dmgByLevel };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1130,20 +1136,22 @@ try {
   checkHealRules();
   checkShopRules();
   const result = solve();
-  check('整条通关路线上血量只会往下掉（生命结晶和魔王房的门除外）',
+  check('整条通关路线上血量只会往下掉（只有捡生命结晶会涨）',
     hpUpViolations.length === 0, hpUpViolations.slice(0, 5).join(' | '));
 
   console.log('\n=== 3. 验收断言 ===');
   check('30 层全部走通并击杀魔王', result.state.status === 'win');
-  check(`终局面板达到设计值（攻击 ${TARGET.atk} / 防御 ${TARGET.def} / 生命上限 ${TARGET.maxHp}）`,
-    result.state.atk === TARGET.atk && result.state.def === TARGET.def && result.state.maxHp === TARGET.maxHp,
-    `实际 ${result.state.atk}/${result.state.def}/${result.state.maxHp}`);
+  check(`终局面板达到设计值（攻击 ${TARGET.atk} / 防御 ${TARGET.def}）`,
+    result.state.atk === TARGET.atk && result.state.def === TARGET.def,
+    `实际 ${result.state.atk}/${result.state.def}`);
+  check(`魔王战开打前身上有 ${TARGET.hp} 血（没有上限，全靠一路攒）`,
+    result.bossEntryHp === TARGET.hp, `实际 ${result.bossEntryHp}`);
   check('魔王战 48 回合（每回合 4200 伤害）', result.rounds === 48, `实际 ${result.rounds} 回合`);
   check('通关后剩余生命在 11600 上下（8000~16000）',
     result.state.hp >= 8000 && result.state.hp <= 16000,
     `实际 ${result.state.hp}`);
   const bossLook = previewFight(
-    { hp: TARGET.maxHp, maxHp: TARGET.maxHp, atk: TARGET.atk, def: TARGET.def },
+    { hp: TARGET.hp, atk: TARGET.atk, def: TARGET.def },
     MONSTERS.demon_king
   );
   check('图鉴对魔王的结论是"损失 56400 点血量"',
@@ -1153,6 +1161,17 @@ try {
     `捡到时机：第 ${result.bookStep} 个动作`);
   check('整条通关路线上背包里只有图鉴和卷轴（药和商店商品都不进背包）',
     bagViolations.length === 0, bagViolations.slice(0, 5).join(' | '));
+  const dmgBad = [];
+  const measuredAll = [];
+  for (let f = 1; f <= 30; f++) {
+    const measured = (result.dmgByLevel[f - 1] || 0) - (f === 30 ? 56400 : 0);
+    measuredAll.push(measured);
+    if (measured !== FLOOR_DAMAGE[f]) {
+      dmgBad.push(`第 ${f} 层实测 ${measured} / 表里 ${FLOOR_DAMAGE[f]}`);
+    }
+  }
+  check('每一层掉的血和数值表对得上（结晶给多少就是这么标定的）',
+    dmgBad.length === 0, dmgBad.length ? '实测 ' + measuredAll.join(',') : '');
   check('装备为 5 档钻石剑 + 5 档钻石盾',
     result.state.gear.weapon && result.state.gear.weapon.tier === 5 &&
     result.state.gear.armor && result.state.gear.armor.tier === 5,

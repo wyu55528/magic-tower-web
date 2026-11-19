@@ -475,7 +475,7 @@ function legendOf(plan) {
   lines.push('          v: ' + JSON.stringify(plan.patrolId) + ',');
   if (plan.sword) lines.push('          s: ' + JSON.stringify(plan.sword) + ',');
   if (plan.shield) lines.push('          t: ' + JSON.stringify(plan.shield) + ',');
-  lines.push('          h: { id: "life_crystal", maxHp: ' + plan.crystal + ' },');
+  lines.push('          h: { id: "life_crystal", hp: ' + plan.crystal + ' },');
   for (const g of plan.golds) {
     lines.push('          ' + JSON.stringify(g.ch) + ': { value: ' + g.value + ' },');
   }

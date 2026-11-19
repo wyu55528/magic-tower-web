@@ -3,11 +3,11 @@
  * 战斗公式：伤害 = max(1, 攻方攻击 - 守方防御)，双方每回合同时结算，玩家先手。
  *
  * 守关怪数值按"该层玩家打完本层装备后的面板"倒推：
- *   每回合打玩家 3% 血上限（最多 700），一场怪大约吃掉 18% 血，3~12 回合打死。
+ *   每回合打玩家 3% 血量（最多 700），一场怪大约吃掉 18% 血，3~12 回合打死。
  *   塔里每层的怪变多了、也变强了（血量 ×1.25），一场怪吃掉的血更多，
  *   所以每层补的东西也跟着加。
  * 魔王是 20 万血的耐久战：玩家每回合打 4200，48 回合击杀，
- *   魔王反击 47 次共 56400 伤害，终局面板 68000 血打完剩 11600。
+ *   魔王反击 47 次共 56400 伤害，魔王战前 68000 血打完剩 11600。
  *
  * 三种怪：
  *   守关怪（G）：每层 1 只，堵在开门钥匙前面，不打就拿不到钥匙。
@@ -19,7 +19,7 @@
  *   imp（小鬼）：血 35% / 攻 45% / 防 60% / 金币 30%
  *   spr（史莱姆）：血 18% / 攻 25% / 防 40% / 金币 15%
  *   patrol（巡逻怪）：按"刚进这一层时的面板"倒推，
- *     打 5 个回合，每回合吃掉 8% 血上限
+ *     打 5 个回合，每回合吃掉 8% 血量
  */
 import { entryPanel, PATROL_DAMAGE_RATIO, PATROL_ROUNDS } from './balance.js';
 
@@ -106,7 +106,7 @@ for (let floor = 1; floor <= 30; floor++) {
   const monDef = Math.max(1, Math.round(p.atk * 0.08));      // 玩家每回合能打出的伤害
   const dmgPerRound = Math.max(1, p.atk - monDef);
   const hp = dmgPerRound * PATROL_ROUNDS;                    // 撑 PATROL_ROUNDS 个回合
-  const loss = Math.round(p.maxHp * PATROL_DAMAGE_RATIO);    // 一场要吃掉的血
+  const loss = Math.round(p.hp * PATROL_DAMAGE_RATIO);        // 一场要吃掉的血
   const atk = p.def + Math.max(1, Math.round(loss / (PATROL_ROUNDS - 1)));
   MONSTERS['patrol_' + floor] = {
     name: pt.name, icon: pt.icon,

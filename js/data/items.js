@@ -3,8 +3,8 @@
  * 30 层塔的属性曲线是倒推出来的：
  *   剑 5 档 取最高档：铁剑 +300 → 青铜剑 +900 → 白银剑 +1800 → 黄金剑 +2900 → 钻石剑 +4900
  *   盾 5 档 取最高档：木盾 +60 → 铁盾 +150 → 银盾 +300 → 黄金盾 +500 → 钻石盾 +1250
- *   生命结晶逐层累加，合计 +67200
- *   终局面板 攻击 5000 / 防御 1300 / 生命上限 68000
+ *   生命结晶逐层加血，净增长合计 +67200
+ *   终局面板 攻击 5000 / 防御 1300，魔王战前 68000 血，打完剩 11600
  */
 export const ITEMS = {
   // ---- 武器（攻击）5 档：只生效最高档，拾取低档无效 ----
@@ -21,9 +21,9 @@ export const ITEMS = {
   shield_gold    : { name: '黄金盾', type: 'equip', line: 'armor', tier: 4, def: 500, icon: '🛡️', desc: '防御力 +500（4 档）' },
   shield_diamond : { name: '钻石盾', type: 'equip', line: 'armor', tier: 5, def: 1250, icon: '🛡️', desc: '防御力 +1250（5 档）' },
 
-  // ---- 生命结晶（生命上限，逐层累加；数值由各层 legend 覆盖）----
-  // 捡到当场回满血：塔里没有药水，加血只有即时性，没有"存起来以后再喝"的东西
-  life_crystal: { name: '生命结晶', type: 'heart', maxHp: 0, icon: '💠', desc: '提高生命上限，并回满血' },
+  // ---- 生命结晶（直接加血；数值由各层 legend 覆盖）----
+  // 塔里的血量没有上限：结晶给多少，血量就多多少
+  life_crystal: { name: '生命结晶', type: 'heart', hp: 0, icon: '💠', desc: '直接增加生命值' },
 
   // ---- 怪物图鉴（第 1 层出口拾取，进了背包，按 B 可以随时打开）----
   monster_book: { name: '怪物图鉴', type: 'book', icon: '📖', desc: '查看当前层怪物的属性和战斗结论' },
@@ -38,9 +38,9 @@ export const ITEMS = {
 
   // ---- 商店商品：买下当场生效，不进背包、不留存 ----
   //   疗伤丹：血立刻涨上去；磨刀石 / 护心镜：攻击力、防御力永久加到面板上
-  shop_heal_1: { name: '疗伤丹 · 小', type: 'heal', heal: 1000, price: 150,  icon: '💊', desc: '立刻恢复 1000 点生命' },
-  shop_heal_2: { name: '疗伤丹 · 中', type: 'heal', heal: 2500, price: 400,  icon: '💊', desc: '立刻恢复 2500 点生命' },
-  shop_heal_3: { name: '疗伤丹 · 大', type: 'heal', heal: 5000, price: 1000, icon: '💊', desc: '立刻恢复 5000 点生命' },
+  shop_heal_1: { name: '疗伤丹 · 小', type: 'heal', heal: 1000, price: 500,  icon: '💊', desc: '立刻恢复 1000 点生命' },
+  shop_heal_2: { name: '疗伤丹 · 中', type: 'heal', heal: 2500, price: 1200, icon: '💊', desc: '立刻恢复 2500 点生命' },
+  shop_heal_3: { name: '疗伤丹 · 大', type: 'heal', heal: 6000, price: 2500, icon: '💊', desc: '立刻恢复 6000 点生命' },
   shop_atk:    { name: '磨刀石',     type: 'bonus', atk: 200, price: 2000, icon: '🪨', desc: '攻击力永久 +200（买下立刻生效）' },
   shop_def:    { name: '护心镜',     type: 'bonus', def: 100, price: 2000, icon: '🔰', desc: '防御力永久 +100（买下立刻生效）' },
 };

@@ -169,7 +169,7 @@ function doCloseBook(state) {
  * 买商店里的东西。
  *
  * 规则：买下当场生效，不进背包。
- *   疗伤丹 —— 血立刻涨上去；
+ *   疗伤丹 —— 血立刻涨上去（血量没有上限，什么时候买都回得动）；
  *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
  * 所以商店里没有"买来存着以后再喝"的东西：加血只有即时性。
  */
@@ -190,17 +190,12 @@ function doBuy(state, itemId) {
     return { state: s, events };
   }
 
-  // 回血：当场生效，不进背包；血已经满了就别花这个钱
+  // 回血：当场生效，不进背包。血量没有上限，什么时候买都能回。
   if (item.type === 'heal') {
-    if (s.hp >= s.maxHp) {
-      events.push({ text: '生命值已经满了，买药没意义。', kind: 'warn' });
-      return { state: s, events };
-    }
-    const heal = Math.min(item.heal, s.maxHp - s.hp);
     s.gold -= item.price;
     entry.count -= 1;
-    s.hp += heal;
-    events.push({ text: `买下 ${item.name}，恢复了 ${heal} 点生命。`, kind: 'heal' });
+    s.hp += item.heal;
+    events.push({ text: `买下 ${item.name}，恢复了 ${item.heal} 点生命。`, kind: 'heal' });
     return { state: s, events };
   }
 

@@ -53,7 +53,7 @@ export function renderBook(overlay, state, onLeave) {
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    const player = { hp: state.hp, maxHp: state.maxHp, atk: state.atk, def: state.def };
+    const player = { hp: state.hp, atk: state.atk, def: state.def };
 
     ids.forEach((id) => {
       const mon = MONSTERS[id];

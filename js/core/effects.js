@@ -16,7 +16,7 @@ export function tileEffects(tile) {
       if (!item) return [];
       if (item.type === 'key')    return [{ kind: 'giveKey', color: item.lock, count: 1 }];
       if (item.type === 'equip')  return [{ kind: 'equip', id: tile.id }];
-      if (item.type === 'heart')  return [{ kind: 'growMaxHp', id: tile.id, value: tile.maxHp }];
+      if (item.type === 'heart')  return [{ kind: 'addHp', id: tile.id, value: tile.hp }];
       if (item.type === 'book')   return [{ kind: 'giveItem', id: tile.id, count: 1 }];
       if (item.type === 'warp')   return [{ kind: 'giveItem', id: tile.id, count: 1 }];
       return [];
@@ -86,15 +86,14 @@ const HANDLERS = {
     return { events: [{ text: `装备了 ${item.name}（${detail}，${tier} 档）`, kind: 'item' }] };
   },
 
-  // 生命结晶：上限抬高，同时把血补满。
-  // 补满是"即时"的——血当场就回来了，塔里不存在存着以后再喝的东西。
-  growMaxHp(s, p) {
+  // 生命结晶：直接加血。
+  // 塔里的血量没有上限，结晶给多少血，身上的血就多多少。
+  addHp(s, p) {
     const item = ITEMS[p.id];
-    const gain = p.value != null ? p.value : (item.maxHp || 0);
+    const gain = p.value != null ? p.value : (item.hp || 0);
     if (gain <= 0) return { events: [] };
-    s.maxHp += gain;
-    s.hp = s.maxHp;
-    return { events: [{ text: `获得 ${item.name}（生命上限 +${gain}，血量回满 ${s.hp}）`, kind: 'item' }] };
+    s.hp += gain;
+    return { events: [{ text: `获得 ${item.name}（生命 +${gain}，现在 ${s.hp}）`, kind: 'item' }] };
   },
 
   gold(s, p) {
@@ -116,15 +115,10 @@ const HANDLERS = {
     const mon = MONSTERS[p.id];
     const events = [];
 
-    // 推开魔王房的门，伤口愈合，血量回到上限。
+    // 推开魔王房的门不会再回血：血量没有上限，就没有"满"可回。
     // 这一仗要打 48 回合、硬挨 56400 点伤害，中途没有任何补给，
-    // 所以进门先回满——魔王战是硬碰硬的一场，不是消耗战。
-    if (p.boss && s.hp < s.maxHp) {
-      events.push({ text: `推开魔王房的门，伤口愈合，血量回到 ${s.maxHp}。`, kind: 'heal' });
-      s.hp = s.maxHp;
-    }
-
-    const res = resolveBattle({ hp: s.hp, maxHp: s.maxHp, atk: s.atk, def: s.def }, mon);
+    // 够不够血全看你一路攒了多少——魔王战是硬碰硬的一场。
+    const res = resolveBattle({ hp: s.hp, atk: s.atk, def: s.def }, mon);
     res.log.forEach((text) => events.push({ text, kind: text.startsWith('你') ? 'hit' : 'hurt' }));
     s.hp = res.hpLeft;
 
