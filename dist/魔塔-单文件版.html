@@ -1478,7 +1478,8 @@ function landingNear(levelIndex, stairChar) {
  *   剑 5 档 取最高档：铁剑 +300 → 青铜剑 +900 → 白银剑 +1800 → 黄金剑 +2900 → 钻石剑 +4900
  *   盾 5 档 取最高档：木盾 +60 → 铁盾 +150 → 银盾 +300 → 黄金盾 +500 → 钻石盾 +1250
  *   生命结晶逐层加血，净增长合计 +67200
- *   商店每家卖三样（加血 / 加攻 / 加防），买一次加固定的数，每买一次同一项就贵一格
+ *   商店每家卖三样（加血 / 加攻 / 加防），买一次加固定的数；
+ *   每家商店自己一套价目表，同一家店里连买同一项就越来越贵
  *   终局面板 攻击 5000 / 防御 1300，魔王战前 68000 血，打完剩 11600
  */
 const ITEMS = {
@@ -1512,7 +1513,7 @@ const ITEMS = {
   key_red:    { name: '红钥匙', short: '红', type: 'key', lock: 'red',    icon: '🔑', desc: '打开一扇红门' },
 
   // ---- 商店商品：买下当场生效，不进背包、不留存 ----
-  //   加多少、价格多少都由「这家商店在第几层 + 这一项买过几次」算出来，
+  //   加多少、价格多少都由「这家商店在第几层 + 这一项在这家买过几次」算出来，
   //   所以这里只放名字、种类和图标，数值在 js/data/balance.js 的 shopPlan() 里。
   shop_heal: { name: '疗伤丹', type: 'heal',  line: 'hp',  icon: '💊', desc: '回复生命值' },
   shop_atk:  { name: '磨刀石', type: 'bonus', line: 'atk', icon: '🪨', desc: '攻击力永久增加' },
@@ -1534,7 +1535,7 @@ function bagEntries(state) {
 }
 
 // ===== js/core/state.js =====
-const STATE_VERSION = 7;
+const STATE_VERSION = 8;
 
 /**
  * 基础属性。
@@ -1564,8 +1565,8 @@ function createInitialState(start) {
     openDoors: {}, // "层:x,y" -> true，已开过的门不再扣钥匙
     taken: {},     // "层:x,y" -> true，一次性效果已结算
     bonus: { atk: 0, def: 0 },   // 商店买的永久加攻/加防（直接算进面板）
-    bought: {},     // 商店三项各买过几次（涨价计数用）
-    shop: null,    // 进入商店时：{ stock: [{id,amount,price,step}] }
+    bought: {},     // 商店涨价计数："层:商品" -> 在这家店里买过几次（每家店各算各的）
+    shop: null,    // 进入商店时：{ floor, stock: [{id,amount,base,price,next}] }
     steps: 0,
     status: 'playing', // playing | inShop | inBook | dead | win
   };
@@ -1587,7 +1588,7 @@ function cloneState(s) {
     taken: { ...s.taken },
     bonus: { ...s.bonus },
     bought: { ...(s.bought || {}) },
-    shop: s.shop ? { stock: s.shop.stock.map((x) => ({ ...x })) } : null,
+    shop: s.shop ? { floor: s.shop.floor, stock: s.shop.stock.map((x) => ({ ...x })) } : null,
   };
 }
 
@@ -1699,24 +1700,54 @@ function entryPanel(floor) {
  * 规则：
  *   1) 每样东西买一次加固定的数，加的数随楼层变高而变大（第 k 家商店给第 k 份量）；
  *   2) 没有库存限制，想买多少次买多少次；
- *   3) 每买一次，同一样东西的价格就往上抬一格（抬多少见 step），
- *      三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
+ *   3) 每家商店自己一套价目表：第 6 层买过几次，不影响第 10 层那家的起步价；
+ *   4) 同一家店里连买同一项，价格按 1.6 倍往上走（不是等差，是等比），买得越多越贵。
+ *
+ * 价目表是按金币产出标定的，不是随手拍的数字：
+ *   玩家走到第 k 家商店时，累计能攒 SHOP_GOLD_BUDGET[k-1] 枚金币，
+ *   一套（三样各买一次）要花的钱占家底的比例，从第 6 层的 50% 一路降到第 29 层的 8%。
+ *   越往上家底越厚，一次能买得越多，所以高层商店是花钱的主战场。
  */
 const SHOP_FLOORS = [6, 10, 14, 18, 22, 26, 29];
 
 /**
+ * 走到每家商店时，玩家累计攒下的金币（参考路线把每层金币都捡完的实测值）。
+ * verify.js 会重新扫一遍关卡，核对这个表跟关卡里实际掉的金币对得上。
+ */
+const SHOP_GOLD_BUDGET = [1962, 5186, 9922, 18375, 30579, 48399, 61989];
+
+/** 第 k 家商店的单位价系数（k = 1..7）：越往上单位越便宜，攒钱到高层买更划算 */
+const SHOP_PRICE_SCALE = [1.3, 1.25, 1.2, 1.15, 1.1, 1.05, 1.0];
+
+/** 三样东西的单位价：每点生命 / 每点攻击 / 每点防御，各是多少金 */
+const SHOP_UNIT_PRICE = { hp: 0.2, atk: 5, def: 12 };
+
+/** 同一家店里连买同一项，价格按这个倍数往上走（等比） */
+const SHOP_PRICE_RATIO = 1.6;
+
+/**
  * 第 floor 层那家商店卖什么。
- * amount = 买一次加多少；base = 起步价；step = 每买一次涨价多少。
- * 起步价也随楼层涨，但涨得比数值慢，所以越高层越划算。
+ * amount = 买一次加多少；base = 这家店的起步价（第一次买的价格）。
  */
 function shopPlan(floor) {
   const k = SHOP_FLOORS.indexOf(floor) + 1;      // 第几家商店（1 起）
   if (k < 1) return [];
+  const s = SHOP_PRICE_SCALE[k - 1];
   return [
-    { id: 'shop_heal', amount: 1000 * k, base: 300 + 100 * (k - 1), step: 400 },
-    { id: 'shop_atk',  amount: 50 * k,   base: 600 + 150 * (k - 1), step: 700 },
-    { id: 'shop_def',  amount: 25 * k,   base: 400 + 120 * (k - 1), step: 500 },
+    { id: 'shop_heal', amount: 1000 * k, base: Math.round(SHOP_UNIT_PRICE.hp * 1000 * k * s) },
+    { id: 'shop_atk',  amount: 50 * k,   base: Math.round(SHOP_UNIT_PRICE.atk * 50 * k * s) },
+    { id: 'shop_def',  amount: 25 * k,   base: Math.round(SHOP_UNIT_PRICE.def * 25 * k * s) },
   ];
+}
+
+/** 在同一家店里已经买过 n 次之后，这一样东西下一次的价格 */
+function shopPrice(base, boughtHere) {
+  return Math.round(base * Math.pow(SHOP_PRICE_RATIO, boughtHere));
+}
+
+/** 涨价计数的键：每家商店的三项各算各的，互不牵连 */
+function shopKey(floor, id) {
+  return floor + ':' + id;
 }
 
 /**
@@ -2019,14 +2050,21 @@ const HANDLERS = {
 
   openShop(s, p) {
     s.status = 'inShop';
-    // 货架价格 = 这家商店的起步价 + 这一项已经买过几次 × 涨价步进
+    const floor = p.floor;
+    // 每家商店自己一套价目表：这家的东西在这家买过几次，就从这家自己的起步价往上抬。
+    // 别的商店买过多少次，跟这里没关系。
     s.shop = {
-      stock: shopPlan(p.floor).map((x) => ({
-        id: x.id,
-        amount: x.amount,
-        price: x.base + (s.bought[x.id] || 0) * x.step,
-        step: x.step,
-      })),
+      floor,
+      stock: shopPlan(floor).map((x) => {
+        const n = s.bought[shopKey(floor, x.id)] || 0;
+        return {
+          id: x.id,
+          amount: x.amount,
+          base: x.base,
+          price: shopPrice(x.base, n),
+          next: shopPrice(x.base, n + 1),
+        };
+      }),
     };
     return {
       events: [{ text: '进入商店。', kind: 'level' }],
@@ -2250,7 +2288,8 @@ function doCloseBook(state) {
  * 规则：买下当场生效，不进背包，没有库存限制。
  *   疗伤丹 —— 血立刻涨上去（血量没有上限，什么时候买都回得动）；
  *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
- * 每买一次，同一项的价格就往上抬一格，抬多少由这家商店的步进决定；
+ * 每家商店自己一套价目表：在第 6 层买过几次，不影响第 10 层那家的起步价；
+ * 同一家店里连买同一项，价格按 1.6 倍往上走；
  * 三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
  */
 function doBuy(state, itemId) {
@@ -2270,10 +2309,14 @@ function doBuy(state, itemId) {
     return { state: s, events };
   }
 
-  // 买下当场生效，不进背包；没有库存限制，但同一项下一次买就贵一格
+  // 买下当场生效，不进背包；没有库存限制。
+  // 同一家店里连买同一项，价格按 1.6 倍往上走；计数只记在这家店头上，别的店不受影响。
   s.gold -= entry.price;
-  entry.price += entry.step;
-  s.bought[itemId] = (s.bought[itemId] || 0) + 1;
+  const key = shopKey(s.shop.floor, itemId);
+  const n = (s.bought[key] || 0) + 1;
+  s.bought[key] = n;
+  entry.price = shopPrice(entry.base, n);
+  entry.next = shopPrice(entry.base, n + 1);
 
   // 回血：当场生效。血量没有上限，什么时候买都能回。
   if (item.type === 'heal') {
@@ -2640,7 +2683,7 @@ function createLogView(el) {
  * 商店界面。渲染进 overlay 面板，点击购买 / 按数字键购买。
  *
  * 货架上就三样：加血、加攻、加防。每样东西买一次加固定的数，
- * 越高层加得越多；每买一次，同一项的价格就往上抬一格。
+ * 越高层加得越多；每家商店自己一套价目表，在同一家店里连买同一项就越来越贵。
  * 没有库存限制，也没有"买来存着以后再用"这一说 —— 买下当场生效。
  */
 /** 这一项买一次能加多少，写成一句人话 */
@@ -2678,7 +2721,7 @@ function renderShop(overlay, state, onBuy, onLeave) {
       `<span class="bag-icon">${item.icon}</span>` +
       `<span class="shop-name">${item.name}</span>` +
       `<span class="shop-desc">${effectText(item, entry.amount)}</span>` +
-      `<span class="shop-next">再买一次 +${entry.step} 金</span>` +
+      `<span class="shop-next">再买一次 ${entry.next} 金</span>` +
       `<span class="shop-price">${entry.price} 金</span>`;
 
     btn.addEventListener('click', () => onBuy(entry.id));

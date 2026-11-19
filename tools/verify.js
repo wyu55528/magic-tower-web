@@ -14,7 +14,7 @@ import { LEVELS, getGrid, findCharInLevel, monsterIdsOnLevel, landingNear } from
 import { ITEMS } from '../js/data/items.js';
 import { MONSTERS } from '../js/data/monsters.js';
 import { createInitialState, BASE_STATS } from '../js/core/state.js';
-import { FLOOR_DAMAGE, crystalOn, shopPlan, SHOP_FLOORS } from '../js/data/balance.js';
+import { FLOOR_DAMAGE, crystalOn, shopPlan, shopPrice, SHOP_FLOORS, SHOP_GOLD_BUDGET, SHOP_PRICE_RATIO } from '../js/data/balance.js';
 import { step } from '../js/core/reducer.js';
 import { resolveBattle, previewFight } from '../js/core/battle.js';
 import { writeFileSync } from 'node:fs';
@@ -839,6 +839,43 @@ function checkShopRules() {
   }
   check('七家商店的加成逐层递增', mono);
 
+  // ③ 起步价逐层递增（每家店自己一套价目表）
+  let baseMono = true;
+  const baseTable = [];
+  for (let i = 0; i < SHOP_FLOORS.length; i++) {
+    const plan = shopPlan(SHOP_FLOORS[i]);
+    baseTable.push(`第${SHOP_FLOORS[i]}层 ${plan.map((x) => x.base).join('/')}`);
+    if (i > 0) {
+      const prev = shopPlan(SHOP_FLOORS[i - 1]);
+      if (!plan.every((x, j) => x.base > prev[j].base)) baseMono = false;
+    }
+  }
+  check('七家商店的起步价逐层递增', baseMono, baseTable.join('，'));
+
+  // ④ 价目表是按金币产出标定的：重新扫一遍关卡，核对这个表
+  let cum = 0;
+  const cumByFloor = [];
+  LEVELS.forEach((lv, i) => {
+    getGrid(i).forEach((row) => row.forEach((t) => {
+      if (t.t === 'gold') cum += t.value || 0;
+      else if (t.t === 'monster' || t.t === 'boss') cum += (MONSTERS[t.id] || {}).gold || 0;
+    }));
+    cumByFloor.push(cum);
+  });
+  check('价目表按金币产出标定（金币预算表和关卡里实际掉的金币对得上）',
+    SHOP_FLOORS.every((f, k) => cumByFloor[f - 1] === SHOP_GOLD_BUDGET[k]),
+    SHOP_FLOORS.map((f, k) => `第${f}层 ${cumByFloor[f - 1]}`).join('，') +
+    ' vs ' + SHOP_GOLD_BUDGET.join('，'));
+
+  // 一套（三样各买一次）占家底的比例逐层下降：越往上越买得起
+  const setShare = SHOP_FLOORS.map((f, k) => {
+    const set = shopPlan(f).reduce((a, x) => a + x.base, 0);
+    return set / SHOP_GOLD_BUDGET[k];
+  });
+  check('一套三样的价钱占家底的比例逐层下降（第 6 层最吃力，第 29 层最宽裕）',
+    setShare.every((v, i) => i === 0 || v < setShare[i - 1]),
+    setShare.map((v) => Math.round(v * 100) + '%').join(' → '));
+
   // ③ 买加血：当场回血、金币扣掉、不进背包
   const s1 = openShop(6, 5000);
   const r1 = step(s1, { type: 'BUY', itemId: healId });
@@ -847,16 +884,18 @@ function checkShopRules() {
     !(r1.state.bag && r1.state.bag[healId]),
     `血量 ${s1.hp} → ${r1.state.hp}，金币 5000 → ${r1.state.gold}`);
 
-  // ④ 同一项每买一次就贵一格（线性涨价）
+  // ④ 同一家店里连买同一项，价格按 1.6 倍往上走（等比，不是等差）
   let cur = openShop(6, 999999);
   const prices = [priceOf(cur, healId)];
   for (let i = 0; i < 3; i++) {
     cur = step(cur, { type: 'BUY', itemId: healId }).state;
     prices.push(priceOf(cur, healId));
   }
-  check('同一项每买一次就贵一格（线性涨价）',
-    prices[0] === healPlan.base && prices[1] === healPlan.base + healPlan.step &&
-    prices[2] === healPlan.base + 2 * healPlan.step && prices[3] === healPlan.base + 3 * healPlan.step,
+  check('同一家店里连买同一项，价格按 1.6 倍往上走（等比，不是等差）',
+    prices[0] === healPlan.base &&
+    prices[1] === shopPrice(healPlan.base, 1) && prices[2] === shopPrice(healPlan.base, 2) &&
+    prices[3] === shopPrice(healPlan.base, 3) &&
+    prices[1] > prices[0] && prices[2] - prices[1] > prices[1] - prices[0],
     prices.join(' → '));
 
   // ⑤ 没有库存限制：想买多少次买多少次
@@ -868,7 +907,7 @@ function checkShopRules() {
     if (res.events.some((e) => e.kind === 'item')) bought12++;
   }
   check('没有库存限制：连买 12 次都买得到',
-    bought12 === 12 && priceOf(c3, atkId) === atkPlan.base + 12 * atkPlan.step,
+    bought12 === 12 && priceOf(c3, atkId) === shopPrice(atkPlan.base, 12),
     `买了 ${bought12} 次，价格 ${priceOf(c3, atkId)}`);
 
   // ⑥ 三个计数器各算各的
@@ -879,14 +918,24 @@ function checkShopRules() {
     priceOf(c4, defId) === defBefore && priceOf(c4, atkId) === atkPlan.base,
     `加防 ${defBefore} → ${priceOf(c4, defId)}，加攻 ${priceOf(c4, atkId)}`);
 
-  // ⑦ 涨价计数跨商店连着算：第 6 层买过一次加攻，第 10 层再买就贵一格
+  // ⑦ 各家商店独立计价：第 6 层买过加攻，不影响第 10 层那家的起步价
   const s5 = openShop(6, 999999);
   const c5 = step(s5, { type: 'BUY', itemId: atkId }).state;
   const plan10 = shopPlan(10).find((x) => x.id === atkId);
   const s5b = enterShopAt(c5, 10);
-  check('涨价计数跨商店连着算（第 10 层的加攻比起步价贵一格）',
-    !!s5b && s5b.status === 'inShop' && priceOf(s5b, atkId) === plan10.base + atkPlan.step,
+  check('各家商店独立计价：第 6 层买过的加攻，不影响第 10 层那家的起步价',
+    !!s5b && s5b.status === 'inShop' && priceOf(s5b, atkId) === plan10.base,
     `第 10 层加攻 ${s5b ? priceOf(s5b, atkId) : '进不去'}，起步价 ${plan10.base}`);
+
+  // ⑧ 同一家商店反复进出，价格接着上次继续涨
+  const s6a = openShop(6, 999999);
+  const c6a = step(s6a, { type: 'BUY', itemId: healId }).state;
+  const priceBefore = priceOf(c6a, healId);
+  const c6b = step(c6a, { type: 'CLOSE_SHOP' }).state;
+  const c6c = enterShopAt(c6b, 6);
+  check('同一家商店反复进出，价格接着上次继续涨',
+    !!c6c && c6c.status === 'inShop' && priceOf(c6c, healId) === priceBefore,
+    `离开前 ${priceBefore}，再进 ${c6c ? priceOf(c6c, healId) : '进不去'}`);
 
   // ⑧ 加攻 / 加防永久加到面板上
   const s6 = openShop(6, 999999);

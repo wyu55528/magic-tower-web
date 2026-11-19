@@ -105,24 +105,54 @@ export function entryPanel(floor) {
  * 规则：
  *   1) 每样东西买一次加固定的数，加的数随楼层变高而变大（第 k 家商店给第 k 份量）；
  *   2) 没有库存限制，想买多少次买多少次；
- *   3) 每买一次，同一样东西的价格就往上抬一格（抬多少见 step），
- *      三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
+ *   3) 每家商店自己一套价目表：第 6 层买过几次，不影响第 10 层那家的起步价；
+ *   4) 同一家店里连买同一项，价格按 1.6 倍往上走（不是等差，是等比），买得越多越贵。
+ *
+ * 价目表是按金币产出标定的，不是随手拍的数字：
+ *   玩家走到第 k 家商店时，累计能攒 SHOP_GOLD_BUDGET[k-1] 枚金币，
+ *   一套（三样各买一次）要花的钱占家底的比例，从第 6 层的 50% 一路降到第 29 层的 8%。
+ *   越往上家底越厚，一次能买得越多，所以高层商店是花钱的主战场。
  */
 export const SHOP_FLOORS = [6, 10, 14, 18, 22, 26, 29];
 
 /**
+ * 走到每家商店时，玩家累计攒下的金币（参考路线把每层金币都捡完的实测值）。
+ * verify.js 会重新扫一遍关卡，核对这个表跟关卡里实际掉的金币对得上。
+ */
+export const SHOP_GOLD_BUDGET = [1962, 5186, 9922, 18375, 30579, 48399, 61989];
+
+/** 第 k 家商店的单位价系数（k = 1..7）：越往上单位越便宜，攒钱到高层买更划算 */
+const SHOP_PRICE_SCALE = [1.3, 1.25, 1.2, 1.15, 1.1, 1.05, 1.0];
+
+/** 三样东西的单位价：每点生命 / 每点攻击 / 每点防御，各是多少金 */
+const SHOP_UNIT_PRICE = { hp: 0.2, atk: 5, def: 12 };
+
+/** 同一家店里连买同一项，价格按这个倍数往上走（等比） */
+export const SHOP_PRICE_RATIO = 1.6;
+
+/**
  * 第 floor 层那家商店卖什么。
- * amount = 买一次加多少；base = 起步价；step = 每买一次涨价多少。
- * 起步价也随楼层涨，但涨得比数值慢，所以越高层越划算。
+ * amount = 买一次加多少；base = 这家店的起步价（第一次买的价格）。
  */
 export function shopPlan(floor) {
   const k = SHOP_FLOORS.indexOf(floor) + 1;      // 第几家商店（1 起）
   if (k < 1) return [];
+  const s = SHOP_PRICE_SCALE[k - 1];
   return [
-    { id: 'shop_heal', amount: 1000 * k, base: 300 + 100 * (k - 1), step: 400 },
-    { id: 'shop_atk',  amount: 50 * k,   base: 600 + 150 * (k - 1), step: 700 },
-    { id: 'shop_def',  amount: 25 * k,   base: 400 + 120 * (k - 1), step: 500 },
+    { id: 'shop_heal', amount: 1000 * k, base: Math.round(SHOP_UNIT_PRICE.hp * 1000 * k * s) },
+    { id: 'shop_atk',  amount: 50 * k,   base: Math.round(SHOP_UNIT_PRICE.atk * 50 * k * s) },
+    { id: 'shop_def',  amount: 25 * k,   base: Math.round(SHOP_UNIT_PRICE.def * 25 * k * s) },
   ];
+}
+
+/** 在同一家店里已经买过 n 次之后，这一样东西下一次的价格 */
+export function shopPrice(base, boughtHere) {
+  return Math.round(base * Math.pow(SHOP_PRICE_RATIO, boughtHere));
+}
+
+/** 涨价计数的键：每家商店的三项各算各的，互不牵连 */
+export function shopKey(floor, id) {
+  return floor + ':' + id;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { LEVELS, getGrid, tileAt, landingNear } from '../data/levels.js';
 import { LOCK_NAMES } from '../data/tiles.js';
 import { ITEMS } from '../data/items.js';
+import { shopPrice, shopKey } from '../data/balance.js';
 import { tileEffects, applyEffects, recomputeStats } from './effects.js';
 import { cloneState } from './state.js';
 
@@ -171,7 +172,8 @@ function doCloseBook(state) {
  * 规则：买下当场生效，不进背包，没有库存限制。
  *   疗伤丹 —— 血立刻涨上去（血量没有上限，什么时候买都回得动）；
  *   磨刀石 / 护心镜 —— 攻击力、防御力永久加到面板上。
- * 每买一次，同一项的价格就往上抬一格，抬多少由这家商店的步进决定；
+ * 每家商店自己一套价目表：在第 6 层买过几次，不影响第 10 层那家的起步价；
+ * 同一家店里连买同一项，价格按 1.6 倍往上走；
  * 三个计数器各算各的：买了磨刀石不会影响疗伤丹的价格。
  */
 function doBuy(state, itemId) {
@@ -191,10 +193,14 @@ function doBuy(state, itemId) {
     return { state: s, events };
   }
 
-  // 买下当场生效，不进背包；没有库存限制，但同一项下一次买就贵一格
+  // 买下当场生效，不进背包；没有库存限制。
+  // 同一家店里连买同一项，价格按 1.6 倍往上走；计数只记在这家店头上，别的店不受影响。
   s.gold -= entry.price;
-  entry.price += entry.step;
-  s.bought[itemId] = (s.bought[itemId] || 0) + 1;
+  const key = shopKey(s.shop.floor, itemId);
+  const n = (s.bought[key] || 0) + 1;
+  s.bought[key] = n;
+  entry.price = shopPrice(entry.base, n);
+  entry.next = shopPrice(entry.base, n + 1);
 
   // 回血：当场生效。血量没有上限，什么时候买都能回。
   if (item.type === 'heal') {

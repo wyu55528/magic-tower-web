@@ -1,7 +1,7 @@
 import { ITEMS } from '../data/items.js';
 import { MONSTERS } from '../data/monsters.js';
 import { LOCK_NAMES } from '../data/tiles.js';
-import { shopPlan } from '../data/balance.js';
+import { shopPlan, shopPrice, shopKey } from '../data/balance.js';
 import { BASE_STATS } from './state.js';
 import { resolveBattle } from './battle.js';
 
@@ -104,14 +104,21 @@ const HANDLERS = {
 
   openShop(s, p) {
     s.status = 'inShop';
-    // 货架价格 = 这家商店的起步价 + 这一项已经买过几次 × 涨价步进
+    const floor = p.floor;
+    // 每家商店自己一套价目表：这家的东西在这家买过几次，就从这家自己的起步价往上抬。
+    // 别的商店买过多少次，跟这里没关系。
     s.shop = {
-      stock: shopPlan(p.floor).map((x) => ({
-        id: x.id,
-        amount: x.amount,
-        price: x.base + (s.bought[x.id] || 0) * x.step,
-        step: x.step,
-      })),
+      floor,
+      stock: shopPlan(floor).map((x) => {
+        const n = s.bought[shopKey(floor, x.id)] || 0;
+        return {
+          id: x.id,
+          amount: x.amount,
+          base: x.base,
+          price: shopPrice(x.base, n),
+          next: shopPrice(x.base, n + 1),
+        };
+      }),
     };
     return {
       events: [{ text: '进入商店。', kind: 'level' }],

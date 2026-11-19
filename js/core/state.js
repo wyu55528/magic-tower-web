@@ -1,4 +1,4 @@
-export const STATE_VERSION = 7;
+export const STATE_VERSION = 8;
 
 /**
  * 基础属性。
@@ -28,8 +28,8 @@ export function createInitialState(start) {
     openDoors: {}, // "层:x,y" -> true，已开过的门不再扣钥匙
     taken: {},     // "层:x,y" -> true，一次性效果已结算
     bonus: { atk: 0, def: 0 },   // 商店买的永久加攻/加防（直接算进面板）
-    bought: {},     // 商店三项各买过几次（涨价计数用）
-    shop: null,    // 进入商店时：{ stock: [{id,amount,price,step}] }
+    bought: {},     // 商店涨价计数："层:商品" -> 在这家店里买过几次（每家店各算各的）
+    shop: null,    // 进入商店时：{ floor, stock: [{id,amount,base,price,next}] }
     steps: 0,
     status: 'playing', // playing | inShop | inBook | dead | win
   };
@@ -51,6 +51,6 @@ export function cloneState(s) {
     taken: { ...s.taken },
     bonus: { ...s.bonus },
     bought: { ...(s.bought || {}) },
-    shop: s.shop ? { stock: s.shop.stock.map((x) => ({ ...x })) } : null,
+    shop: s.shop ? { floor: s.shop.floor, stock: s.shop.stock.map((x) => ({ ...x })) } : null,
   };
 }
