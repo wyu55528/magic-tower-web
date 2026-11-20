@@ -1,4 +1,6 @@
-export const STATE_VERSION = 8;
+// 地图从 15×15 改成 13×13 的九间房结构，旧存档的坐标跟新地图对不上，
+// 版本号 +1 让旧存档直接读不出来（读档会提示「没有找到本地存档」）。
+export const STATE_VERSION = 9;
 
 /**
  * 基础属性。
