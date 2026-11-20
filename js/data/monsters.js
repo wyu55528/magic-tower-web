@@ -9,17 +9,22 @@
  * 魔王是 20 万血的耐久战：玩家每回合打 4200，48 回合击杀，
  *   魔王反击 47 次共 56400 伤害，魔王战前 68000 血打完剩 11600。
  *
- * 三种怪：
+ * 三种怪，每层 30 只，全塔 900 只：
  *   守关怪（G）：每层 1 只，堵在开门钥匙前面，不打就拿不到钥匙。
- *   壁龛小怪（g/k）：每层 2 只，守在生命结晶、传送卷轴这些死胡同门口。
- *   巡逻怪（v）：每层 2~3 只，直接站在通路上拦路，把战斗密度铺到路上。
+ *   壁龛小怪（g/k）：每层 3 只，守在生命结晶、传送卷轴、剑和盾这些死胡同门口。
+ *   巡逻怪（v）：每层 26 只，直接站在通路上拦路，把战斗密度铺到路上。
+ *
+ * 怪一下子多了五倍，每一场的伤害就得摊薄：
+ * 巡逻怪每场只吃掉进层血量的 0.7%（原来 8%），守关怪还是 18%，
+ * 这样一层 30 场仗打下来，掉的血和以前差不多 —— 变的是节奏，不是难度。
+ * 金币也一样摊薄（见下面的 GOLD_SCALE），塔里金币总量不变。
  *
  * 小怪和巡逻怪的数值不在这里手写，
  *   而是从本层守关怪（或本层的进入面板）按比例派生，这样两套数字不会打架。
  *   imp（小鬼）：血 35% / 攻 45% / 防 60% / 金币 30%
  *   spr（史莱姆）：血 18% / 攻 25% / 防 40% / 金币 15%
  *   patrol（巡逻怪）：按"刚进这一层时的面板"倒推，
- *     打 5 个回合，每回合吃掉 8% 血量
+ *     打 5 个回合，每回合吃掉 0.7% 血量
  */
 import { entryPanel, PATROL_DAMAGE_RATIO, PATROL_ROUNDS } from './balance.js';
 
@@ -85,9 +90,18 @@ const PATROL_TIERS = [
   { name: '魔殿龙裔  ', icon: '🐉' },
 ];
 
+/**
+ * 怪变多了，每只怪掉的金币就摊薄。
+ * 一只守关怪现在只占三十只怪里的一只，金币要摊着掉，
+ * 塔里金币的总量还是六万六千六百四十四，商店的价目表不用动。
+ */
+const GOLD_SCALE = 0.26;
+
 for (let floor = 1; floor <= 30; floor++) {
-  const g = MONSTERS['guard_' + floor];
-  if (!g) continue;
+  const base = MONSTERS['guard_' + floor];
+  if (!base) continue;
+  const g = { ...base, gold: Math.round(base.gold * GOLD_SCALE) };
+  MONSTERS['guard_' + floor] = g;
   const tier = SMALL_TIERS[Math.min(SMALL_TIERS.length - 1, Math.floor((floor - 1) / 5))];
   MONSTERS['imp_' + floor] = {
     name: tier.imp.name, icon: tier.imp.icon,

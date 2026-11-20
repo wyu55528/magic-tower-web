@@ -264,7 +264,7 @@ function checkMapDensity() {
   console.log('\n=== 1d. 地图密度 ===');
 
   const WALL_LIMIT = 0.65;   // 墙占比上限（实测 59.5%）
-  const MON_LIMIT = 5;       // 每层最少怪数（守关怪 + 2 只壁龛怪 + 至少 2 只巡逻怪）
+  const MON_LIMIT = 28;      // 每层最少怪数（守关怪 1 + 壁龛怪 3 + 巡逻怪 26）
   const ITEM_LIMIT = 6;      // 每层最少道具数（不含楼梯/门/怪）
   const DEAD_LIMIT = 6;      // 每层最少死胡同（钥匙/结晶/剑盾/楼梯都要塞进死胡同）
 
@@ -463,7 +463,7 @@ function checkWarpRules() {
  *     - 身后那格死胡同房间里放着资源
  *
  *   巡逻怪（patrol_*）：
- *     - 站在两间房之间的通道上（格子只有两个出口）
+ *     - 站在只有两个出口的格子上（走廊格，或者两出口的房间格）
  *     - 两头都不是死胡同——它堵的是主路，不是壁龛
  *
  * 孤零零站在空地上的怪会被这条断言挡下来。
@@ -522,11 +522,11 @@ function checkMonsterPosts() {
   check(`壁龛怪堵在死胡同口、身后有资源（共 ${checked - patrols} 只）`,
     bad.filter((b) => !b.includes('patrol_')).length === 0,
     bad.filter((b) => !b.includes('patrol_')).slice(0, 6).join(' '));
-  check(`巡逻怪站在两间房之间的通道上，堵住主路（共 ${patrols} 只）`,
+  check(`巡逻怪站在只有两个出口的格子上、堵住主路（共 ${patrols} 只）`,
     bad.filter((b) => b.includes('patrol_')).length === 0,
     bad.filter((b) => b.includes('patrol_')).slice(0, 6).join(' '));
 
-  // 每层的巡逻怪数量：前 15 层 2 只，后 15 层 3 只
+  // 每层的巡逻怪数量：每层都铺满，26 只
   const perLevel = [];
   LEVELS.forEach((level, i) => {
     const grid = getGrid(i);
@@ -536,10 +536,25 @@ function checkMonsterPosts() {
     }));
     perLevel.push(n);
   });
-  const wrongCount = perLevel.filter((n, i) => n !== (i < 15 ? 2 : 3));
-  check('每层巡逻怪数量符合设计（前 15 层 2 只，后 15 层 3 只）',
+  const wrongCount = perLevel.filter((n, i) => n !== 26);
+  check('每层巡逻怪数量符合设计（每层 26 只）',
     wrongCount.length === 0,
     wrongCount.map((_, i) => i + 1).join(' '));
+
+  // 每层的总怪数：守关怪 1 + 壁龛怪 3（结晶 / 壁龛 / 剑盾）+ 巡逻怪 26
+  const totalPerLevel = [];
+  LEVELS.forEach((level, i) => {
+    const grid = getGrid(i);
+    let n = 0;
+    grid.forEach((row, y) => row.forEach((t, x) => {
+      if (t.t === 'monster') n++;
+    }));
+    totalPerLevel.push(n);
+  });
+  const wrongTotal = totalPerLevel.filter((n) => n !== 30);
+  check('每层怪数符合设计（30 只：守关 1 + 壁龛 3 + 巡逻 26）',
+    wrongTotal.length === 0,
+    totalPerLevel.join(' '));
 }
 
 /* ------------------------------------------------------------------ */

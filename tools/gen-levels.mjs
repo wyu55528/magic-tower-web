@@ -10,8 +10,8 @@
  *     偶数坐标是实心柱子，所以任何 2×2 的方块里必定有一格墙
  *     —— 整张图不存在 2×2 的空地，走起来永远是一格宽的通道
  *   - 走廊末端自然形成死胡同：一格房间 + 一格走廊口。
- *     走廊格只连着两间房，出口数恒为 2，所以怪站在走廊口就是堵在通道中间，
- *     身后那格死胡同就是存着资源的小房间
+ *     只有两个出口的格子（走廊格，或者两出口的房间格）都能站怪，
+ *     站在上面就是堵在通道中间；身后那格死胡同就是存着资源的小房间
  *   - 每层最多用掉 6 个死胡同：往上那级楼梯（末层是魔王）、开门钥匙、
  *     生命结晶、商店 / 传送卷轴 / 备用钥匙、剑或盾、往下那级楼梯
  *
@@ -219,27 +219,17 @@ function fail(why) { return { fail: why }; }
 
 /**
  * 在地图上摆东西。
- * 壁龛的角色分配：
- *   gated[0]  -> 门 + 往上爬的楼梯（第 30 层是魔王）
- *   gated[1]  -> 守关怪堵在通道口，身后是开门的钥匙
- *   narrow[0] -> 小鬼堵在通道口，身后是生命结晶
- *   narrow[1] -> 史莱姆堵在通道口，身后是商店 / 传送卷轴 / 备用钥匙
- *   plain[0]  -> 剑 / 盾
- *   plain[1]  -> 往下走回上一层的楼梯
- */
-/**
- * 在地图上摆东西。
  *
  * 死胡同的用法（每层最多用掉 6 个）：
  *   往上那级楼梯（末层是魔王）+ 门    门在走廊口，楼梯在门后的死胡同
  *   开门钥匙 + 守关怪                守关怪堵在走廊口，钥匙在它身后
  *   生命结晶 + 小鬼                  小鬼堵在走廊口，结晶在它身后
  *   商店 / 传送卷轴 / 备用钥匙 + 史莱姆
- *   剑 / 盾                          放在死胡同里，走到底才拿得到
+ *   剑 / 盾 + 小鬼                   剑盾放在死胡同里，门口也站一只小鬼
  *   往下走回上一层的楼梯
  *
- * 走廊格只连着两间房，出口数恒为 2，所以怪站在走廊口就是"堵在通道中间"，
- * 它身后那格死胡同就是存着资源的小房间。
+ * 只有两个出口的格子（走廊格，或者两出口的房间格）都能站怪，
+ * 站在上面就是"堵在通道中间"；身后那格死胡同就是存着资源的小房间。
  */
 /**
  * 巡逻怪：站在通路上拦路。
@@ -273,23 +263,26 @@ function placePatrols(map, plan, placed, used, arrival) {
     }
   }
 
-  // 候选：走廊格（奇偶交替），没被占过，离落脚点至少 2 步
+  // 候选：**只有两个出口**的格子，没被占过，离落脚点至少 2 步
   //
-  // 走廊格只连着两间房（出口数恒为 2），所以它本身就堵住了整条路。
-  // 但死胡同的走廊口要留给壁龛怪，巡逻怪只站在两头都是普通房间的通道上。
+  // 出口数恒为 2 的格子有两种：走廊格（一格走廊只连着两间房），
+  // 和两出口的房间格（房间也可能是通路的一部分）。
+  // 两种都能堵住整条路 —— 怪站在上面，玩家就得先打过去。
+  // 死胡同的走廊口留给壁龛怪（身后是资源房），所以两头是死胡同的一律不选。
   const cand = [];
   for (let y = 1; y < N - 1; y++) {
     for (let x = 1; x < N - 1; x++) {
       if (grid[y][x] !== 1) continue;
-      if (x % 2 === 1 && y % 2 === 1) continue;    // 房间格，不算走廊
       const k = x + ',' + y;
       if (used.has(k) || placed.has(k)) continue;
-      // 这格走廊两头的房间（横向走廊是左右，纵向走廊是上下）
-      const rooms = x % 2 === 0
-        ? [{ x: x - 1, y }, { x: x + 1, y }]
-        : [{ x, y: y - 1 }, { x, y: y + 1 }];
-      const isDeadMouth = rooms.some((r) => (map.degOf.get(r.x + ',' + r.y) || 0) === 1);
-      if (isDeadMouth) continue;
+      const exits = [];
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        if (grid[ny][nx] === 1) exits.push({ x: nx, y: ny });
+      }
+      if (exits.length !== 2) continue;                   // 必须恰好两个出口
+      if (exits.some((e) => (map.degOf.get(e.x + ',' + e.y) || 0) === 1)) continue;
       const d = dist.get(k);
       if (d == null || d < 2) continue;
       cand.push({ x, y, k, d });
@@ -297,21 +290,14 @@ function placePatrols(map, plan, placed, used, arrival) {
   }
   if (cand.length < want) return null;
 
-  // 沿着"离落脚点的距离"这条轴均匀铺开，避免几只怪挤在一块
+  // 沿着"离落脚点的距离"这条轴均匀铺开：候选按距离排序后隔着取，
+  // 这样怪不会全挤在一头，而是从落脚点往里一路都能遇到。
   cand.sort((a, b) => a.d - b.d || (a.k < b.k ? -1 : 1));
   const picked = [];
-  const tooClose = (c) => picked.some((p) => Math.abs(p.x - c.x) + Math.abs(p.y - c.y) < 3);
+  const stride = cand.length / want;
   for (let i = 0; i < want; i++) {
-    const idx = want === 1 ? Math.floor(cand.length / 2)
-      : Math.round((i * (cand.length - 1)) / (want - 1));
-    let c = cand[idx];
+    const c = cand[Math.min(cand.length - 1, Math.floor(i * stride))];
     if (!c) return null;
-    if (tooClose(c)) {
-      // 就近换一只：离落脚点的距离差不多就行
-      const alt = cand.find((t) => !tooClose(t) && Math.abs(t.d - c.d) <= 3);
-      if (!alt) continue;
-      c = alt;
-    }
     picked.push(c);
   }
   if (picked.length < want) return null;
@@ -375,12 +361,13 @@ function tryPlace(map, plan) {
   else if (spare) put(nook.room, spare.ch);
   else put(nook.room, '%');
 
-  // 剑 / 盾放在死胡同里；这一层没有就摆金币
+  // 剑 / 盾放在死胡同里；这一层没有就摆金币。门口站着小鬼，剑和盾也有人守
   const equip = pickDead();
   if (!equip) return fail('equip');
   if (plan.sword) put(equip.room, 's');
   else if (plan.shield) put(equip.room, 't');
   else put(equip.room, '%');
+  put(equip.mouth, 'g');
 
   // 往下走回上一层的楼梯
   let down = null;
