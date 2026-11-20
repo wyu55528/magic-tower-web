@@ -17,7 +17,7 @@ export function createMapView(root) {
     const board = document.createElement('div');
     board.className = 'board';
     const n = grid[0].length;
-    // 地图变大后格子跟着缩，15×15 也能一屏放下
+    // 格子边长跟着地图宽度收：13×13 用大格子，15×15 以上自动缩一档
     board.style.setProperty('--cell', n >= 15 ? 'min(32px, 4.1vw, 4.1vh)' : 'min(38px, 4.6vw, 4.6vh)');
     board.style.gridTemplateColumns = `repeat(${n}, var(--cell))`;
 

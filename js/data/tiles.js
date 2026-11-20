@@ -29,9 +29,9 @@ export const TILE_CHARS = {
   'B': { t: 'item', id: 'monster_book' },   // 怪物图鉴（第 1 层出口）
 
   'G': { t: 'monster', id: 'guard_1' },   // 守关怪（每层 1 只）
-  'g': { t: 'monster', id: 'imp_1' },   // 小怪：小鬼（每层 1 只，legend 指定具体楼层）
-  'k': { t: 'monster', id: 'spr_1' },   // 小怪：史莱姆（每层 1 只，legend 指定具体楼层）
-  'v': { t: 'monster', id: 'patrol_1' },   // 巡逻怪：站在通路上拦路（legend 指定具体楼层）
+  'g': { t: 'monster', id: 'imp_1' },   // 看门怪：小鬼（每层 2 只，legend 指定具体楼层）
+  'k': { t: 'monster', id: 'spr_1' },   // 看门怪：史莱姆（每层 1 只，legend 指定具体楼层）
+  'v': { t: 'monster', id: 'patrol_1' },   // 巡逻怪：待在房间里（每层 26 只，legend 指定具体楼层）
 };
 
 export const LOCK_NAMES = { yellow: '黄钥匙', blue: '蓝钥匙', red: '红钥匙' };
