@@ -78,10 +78,10 @@ function checkLevels() {
   console.log('\n=== 1. 关卡结构校验 ===');
   check('塔高 30 层', LEVELS.length === 30, `实际 ${LEVELS.length} 层`);
 
-  // 地图统一 11×11：比 13×13 少一大圈，跑路时间短，战斗密度高
+  // 地图统一 15×15：厅堂 + 街巷的开阔布局
   const badSize = LEVELS.map((l, i) => ({ l, i }))
-    .filter(({ l }) => l.rows.length !== 11 || l.rows[0].length !== 11);
-  check('30 层地图都是 11×11', badSize.length === 0,
+    .filter(({ l }) => l.rows.length !== 15 || l.rows[0].length !== 15);
+  check('30 层地图都是 15×15', badSize.length === 0,
     badSize.map(({ l, i }) => `第 ${i + 1} 层 ${l.rows.length}×${l.rows[0].length}`).join(' '));
 
   LEVELS.forEach((level, i) => {
@@ -291,8 +291,7 @@ function checkMapDensity() {
     monCounts.push(mons);
     itemCounts.push(items);
 
-    // 走廊宽度：任何 2×2 的方块里必须至少有一格墙。
-    // 否则就会出现 2×2 的空地（一小片开阔地），那就不是"一行一行的道路"了。
+    // 开阔地：2×2 的空地方块，厅堂就是靠它才不像一条弯折的走廊
     let openSquares = 0;
     let dead = 0;
     for (let y = 0; y < H - 1; y++) {
@@ -325,9 +324,9 @@ function checkMapDensity() {
   check(`每层墙占比不超过 ${(WALL_LIMIT * 100).toFixed(0)}%（实测最高 ${(worstWall * 100).toFixed(1)}%）`,
     worstWall <= WALL_LIMIT, `最高的是第 ${wallRatios.indexOf(worstWall) + 1} 层`);
 
-  const openSquares = openSquaresPerLevel.reduce((n, v) => n + v, 0);
-  check('没有 2×2 的空地（走廊都是一格宽，没有开阔地）', openSquares === 0,
-    `共 ${openSquares} 处 2×2 空地`);
+  const minOpenSquares = Math.min(...openSquaresPerLevel);
+  check(`每层都有开阔地（2×2 空地，最少 ${minOpenSquares} 处，下限 2）`, minOpenSquares >= 2,
+    `共 ${openSquaresPerLevel.reduce((n, v) => n + v, 0)} 处 2×2 空地`);
 
   const minDead = Math.min(...deadCounts);
   check(`每层死胡同够用（最少 ${minDead} 个，下限 ${DEAD_LIMIT}）`, minDead >= DEAD_LIMIT);
@@ -452,26 +451,28 @@ function checkWarpRules() {
 
 
 /* ------------------------------------------------------------------ */
-/* 1e. 怪物站位：都堵在通道中间，身后是存资源的房间                        */
+/* 1e. 怪物站位：壁龛怪守着奖励，巡逻怪散在厅堂和街巷上                     */
 /* ------------------------------------------------------------------ */
 
 /**
- * 每只怪都必须"有位置"，但分两种站位：
+ * 每只怪都要有位置，分两种站位：
  *
  *   壁龛怪（守关怪 / 小鬼 / 史莱姆）：
- *     - 站在死胡同的走廊口上，格子只有两个出口
- *     - 身后那格死胡同房间里放着资源
+ *     - 站在壁龛口上，身后那格是只有 1 个出口的死胡同，里面放着资源
+ *     - 所以不打怪就拿不到壁龛里的东西
  *
  *   巡逻怪（patrol_*）：
- *     - 站在只有两个出口的格子上（走廊格，或者两出口的房间格）
- *     - 两头都不是死胡同——它堵的是主路，不是壁龛
+ *     - 站在厅堂和街巷上，出口 ≥ 2，不是死胡同
+ *     - 不占壁龛口 —— 那是壁龛怪的位置
  *
- * 孤零零站在空地上的怪会被这条断言挡下来。
+ * 另外：任何两只怪都不会上下左右相邻，
+ * 所以路上不会出现「一格接一格全是怪」。
  */
 function checkMonsterPosts() {
   console.log('\n=== 1e. 怪物站位 ===');
   const D2 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
   const bad = [];
+  const adjacent = [];
   let checked = 0;
   let patrols = 0;
   LEVELS.forEach((level, i) => {
@@ -486,16 +487,22 @@ function checkMonsterPosts() {
       }
       return d;
     };
+    const isMonster = (a) => a && (a.t === 'monster' || a.t === 'boss');
     grid.forEach((row, y) => row.forEach((t, x) => {
-      if (t.t !== 'monster') return;
-      checked++;
-      const deg = degOfCell(x, y);
-      if (deg !== 2) {
-        bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 出口 ${deg} 个（必须正好 2 个）`);
-        return;
+      if (!isMonster(t)) return;
+
+      // 两只怪挨在一起就要记下来（只看右和下，免得重复计数）
+      for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        if (isMonster(at(x + dx, y + dy))) {
+          adjacent.push(`第 ${i + 1} 层 (${x},${y}) 与 (${x + dx},${y + dy})`);
+        }
       }
 
-      // 身后那格：它的出口只有 1 个（出口就是怪站的地方），所以是个封闭的小房间
+      if (t.t !== 'monster') return;      // 魔王不参与站位规则
+      checked++;
+      const deg = degOfCell(x, y);
+
+      // 身后那格：出口只有 1 个，就是壁龛的尽头
       let room = null;
       for (const [dx, dy] of D2) {
         const a = at(x + dx, y + dy);
@@ -504,10 +511,16 @@ function checkMonsterPosts() {
       }
 
       if (t.id.startsWith('patrol_')) {
-        // 巡逻怪：两头都必须是普通房间（不是死胡同），它堵的是主路
         patrols++;
-        if (room) {
-          bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 站在死胡同口上（该由壁龛怪站）`);
+        if (deg < 2) {
+          bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 出口 ${deg} 个（巡逻怪不能站在死角）`);
+        }
+        // 只有"旁边就是放着资源的死胡同"才算壁龛口；
+        // 地图上别的凹角（空的死胡同）站巡逻怪没关系
+        const roomIsAlcove = room && (
+          room.t === 'item' || room.t === 'shop' || room.t === 'gold' || room.t === 'door');
+        if (roomIsAlcove) {
+          bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 站在壁龛口上（该由壁龛怪站）`);
         }
         return;
       }
@@ -515,16 +528,18 @@ function checkMonsterPosts() {
       const holdsSomething = room &&
         (room.t === 'item' || room.t === 'shop' || room.t === 'gold' || room.t === 'door');
       if (!holdsSomething) {
-        bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 身后 ${room ? room.ch : '无房间'}（壁龛怪身后必须有资源）`);
+        bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 身后 ${room ? room.ch : '无壁龛'}（壁龛怪身后必须有资源）`);
       }
     }));
   });
-  check(`壁龛怪堵在死胡同口、身后有资源（共 ${checked - patrols} 只）`,
+  check(`壁龛怪守着壁龛、身后有资源（共 ${checked - patrols} 只）`,
     bad.filter((b) => !b.includes('patrol_')).length === 0,
     bad.filter((b) => !b.includes('patrol_')).slice(0, 6).join(' '));
-  check(`巡逻怪站在只有两个出口的格子上、堵住主路（共 ${patrols} 只）`,
+  check(`巡逻怪散在厅堂和街巷上、不占壁龛口（共 ${patrols} 只）`,
     bad.filter((b) => b.includes('patrol_')).length === 0,
     bad.filter((b) => b.includes('patrol_')).slice(0, 6).join(' '));
+  check('两只怪不会挨着（正交相邻的怪对数为 0）', adjacent.length === 0,
+    adjacent.slice(0, 6).join(' '));
 
   // 每层的巡逻怪数量：每层都铺满，26 只
   const perLevel = [];
@@ -536,7 +551,7 @@ function checkMonsterPosts() {
     }));
     perLevel.push(n);
   });
-  const wrongCount = perLevel.filter((n, i) => n !== 26);
+  const wrongCount = perLevel.filter((n) => n !== 26);
   check('每层巡逻怪数量符合设计（每层 26 只）',
     wrongCount.length === 0,
     wrongCount.map((_, i) => i + 1).join(' '));
@@ -738,8 +753,15 @@ function checkHealRules() {
   let crystal = null, imp = null;
   g0.forEach((row, y) => row.forEach((t, x) => {
     if (t.t === 'item' && t.id === 'life_crystal') crystal = { x, y };
-    if (t.t === 'monster' && t.id === 'imp_1') imp = { x, y };
   }));
+  if (crystal) {
+    // 守着结晶的那只小鬼：和结晶挨着的那只（每层有两只小鬼，别抓错）
+    neighborsOf(0, crystal.x, crystal.y).forEach((k) => {
+      const [x, y] = k.split(',').map(Number);
+      const t = g0[y][x];
+      if (t && t.t === 'monster' && t.id === 'imp_1') imp = { x, y };
+    });
+  }
   check('第 1 层找得到生命结晶和守着它的小鬼', !!crystal && !!imp);
   if (crystal && imp) {
     const start = neighborsOf(0, imp.x, imp.y)
@@ -1285,7 +1307,7 @@ try {
     }
   }
   check('每一层掉的血和数值表对得上（结晶给多少就是这么标定的）',
-    dmgBad.length === 0, dmgBad.length ? '实测 ' + measuredAll.join(',') : '');
+    dmgBad.length === 0, '实测 ' + measuredAll.join(','));
   check('装备为 5 档钻石剑 + 5 档钻石盾',
     result.state.gear.weapon && result.state.gear.weapon.tier === 5 &&
     result.state.gear.armor && result.state.gear.armor.tier === 5,

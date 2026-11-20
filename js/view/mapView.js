@@ -16,7 +16,10 @@ export function createMapView(root) {
     root.innerHTML = '';
     const board = document.createElement('div');
     board.className = 'board';
-    board.style.gridTemplateColumns = `repeat(${grid[0].length}, var(--cell))`;
+    const n = grid[0].length;
+    // 地图变大后格子跟着缩，15×15 也能一屏放下
+    board.style.setProperty('--cell', n >= 15 ? 'min(32px, 4.1vw, 4.1vh)' : 'min(38px, 4.6vw, 4.6vh)');
+    board.style.gridTemplateColumns = `repeat(${n}, var(--cell))`;
 
     cells = [];
     for (let y = 0; y < grid.length; y++) {
