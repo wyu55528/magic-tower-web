@@ -263,7 +263,7 @@ function checkLevels() {
 function checkMapDensity() {
   console.log('\n=== 1d. 地图密度 ===');
 
-  const WALL_LIMIT = 0.65;   // 墙占比上限（实测 59.5%）
+  const WALL_LIMIT = 0.65;   // 墙占比上限（实测最高 52.9%）
   const MON_LIMIT = 28;      // 每层最少怪数（守关怪 1 + 壁龛怪 3 + 巡逻怪 26）
   const ITEM_LIMIT = 6;      // 每层最少道具数（不含楼梯/门/怪）
   const DEAD_LIMIT = 6;      // 每层最少死胡同（钥匙/结晶/剑盾/楼梯都要塞进死胡同）
