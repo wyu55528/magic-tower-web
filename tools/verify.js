@@ -48,59 +48,119 @@ function check(name, cond, detail = '') {
   if (!cond) failures.push(name + (detail ? ': ' + detail : ''));
 }
 
-/* ---- 房间结构：9 间 3×3 的房，墙在第 4 / 8 行和第 4 / 8 列 ---- */
-const ROOM_X = [1, 5, 9];       // 房间左上角的列
-const ROOM_Y = [1, 5, 9];       // 房间左上角的行
-const WALL_LINES = [4, 8];      // 门洞所在的行 / 列
+/* ---- 房间结构：从地图几何反推（每层大小不一样，不再是固定网格） ---- */
 
-/** 这格属于哪间房（不在房间里就返回 null） */
-function roomOfCell(x, y) {
-  for (let j = 0; j < ROOM_X.length; j++) {
-    if (x < ROOM_X[j] || x > ROOM_X[j] + 2) continue;
-    for (let i = 0; i < ROOM_Y.length; i++) {
-      if (y < ROOM_Y[i] || y > ROOM_Y[i] + 2) continue;
-      return { i, j, x: ROOM_X[j], y: ROOM_Y[i] };
+/**
+ * 一层地图的布局：
+ *   门洞 = 能走、而且左右（或上下）各挨着一个格子的过道格；
+ *   房间 = 去掉门洞之后，剩下的连通块（每间房是一个填满的矩形）。
+ * 这样不管房间多大、怎么排，都能从地图本身认出来。
+ */
+function analyzeLayout(grid) {
+  const H = grid.length, W = grid[0].length;
+  const D2 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  const open = (x, y) => (x < 0 || y < 0 || y >= H || x >= W) ? false : grid[y][x].t !== 'wall';
+
+  const isDoor = Array.from({ length: H }, () => new Array(W).fill(false));
+  const doorCells = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!open(x, y)) continue;
+      const nb = D2.filter(([dx, dy]) => open(x + dx, y + dy));
+      if (nb.length !== 2) continue;
+      const horizontal = nb.every(([, dy]) => dy === 0);
+      const vertical = nb.every(([dx]) => dx === 0);
+      if (!horizontal && !vertical) continue;
+      // 另外两个方向必须是墙：房间贴着门洞的那一格不算门洞
+      const others = D2.filter(([dx, dy]) => !open(x + dx, y + dy));
+      if (others.length !== 2) continue;
+      isDoor[y][x] = true;
+      doorCells.push({ x, y });
     }
   }
-  return null;
-}
 
-/** 这间房四周可能有的门洞（含没开的那几个） */
-function roomDoorways(i, j) {
-  const rx = ROOM_X[j], ry = ROOM_Y[i];
-  const out = [];
-  if (WALL_LINES.includes(ry - 1)) out.push({ x: rx + 1, y: ry - 1 });
-  if (WALL_LINES.includes(ry + 3)) out.push({ x: rx + 1, y: ry + 3 });
-  if (WALL_LINES.includes(rx - 1)) out.push({ x: rx - 1, y: ry + 1 });
-  if (WALL_LINES.includes(rx + 3)) out.push({ x: rx + 3, y: ry + 1 });
-  return out;
-}
+  const roomOf = Array.from({ length: H }, () => new Array(W).fill(-1));
+  const rooms = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!open(x, y) || isDoor[y][x] || roomOf[y][x] >= 0) continue;
+      const id = rooms.length;
+      const cells = [];
+      const stack = [[x, y]];
+      roomOf[y][x] = id;
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        cells.push({ x: cx, y: cy });
+        for (const [dx, dy] of D2) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || ny >= H || nx >= W) continue;
+          if (!open(nx, ny) || isDoor[ny][nx] || roomOf[ny][nx] >= 0) continue;
+          roomOf[ny][nx] = id;
+          stack.push([nx, ny]);
+        }
+      }
+      const xs = cells.map((c) => c.x), ys = cells.map((c) => c.y);
+      rooms.push({
+        id, cells,
+        x: Math.min(...xs), y: Math.min(...ys),
+        w: Math.max(...xs) - Math.min(...xs) + 1,
+        h: Math.max(...ys) - Math.min(...ys) + 1,
+      });
+    }
+  }
 
-/** 这格是不是门洞（走在墙线上） */
-function isDoorwayCell(x, y) {
-  return WALL_LINES.includes(x) || WALL_LINES.includes(y);
+  // 每间房的门洞：挨着这间房、而且是门洞的格子
+  const roomDoors = rooms.map((room) => {
+    const out = [];
+    for (const c of room.cells) {
+      for (const [dx, dy] of D2) {
+        const nx = c.x + dx, ny = c.y + dy;
+        if (nx < 0 || ny < 0 || ny >= H || nx >= W) continue;
+        if (!isDoor[ny][nx]) continue;
+        if (!out.some((d) => d.x === nx && d.y === ny)) out.push({ x: nx, y: ny });
+      }
+    }
+    return out;
+  });
+
+  // 门洞连着的两间房
+  const doors = [];
+  for (const d of doorCells) {
+    const around = D2.map(([dx, dy]) => ({ x: d.x + dx, y: d.y + dy }))
+      .filter((p) => p.x >= 0 && p.y >= 0 && p.x < W && p.y < H && roomOf[p.y][p.x] >= 0)
+      .map((p) => roomOf[p.y][p.x]);
+    const uniq = [...new Set(around)];
+    doors.push({ x: d.x, y: d.y, a: uniq[0] === undefined ? -1 : uniq[0], b: uniq[1] === undefined ? -1 : uniq[1] });
+  }
+
+  const adj = rooms.map(() => new Set());
+  for (const d of doors) {
+    if (d.a < 0 || d.b < 0 || d.a === d.b) continue;
+    adj[d.a].add(d.b);
+    adj[d.b].add(d.a);
+  }
+
+  return { grid, isDoor, doorCells, rooms, roomOf, roomDoors, doors, adj, H, W };
 }
 
 /**
  * 这间房算不算「上锁的房」：每个门口都被怪或者锁着的门堵住了。
  * 这样的房里放着好东西，不打怪就进不去。
  */
-function roomIsSealed(grid, i, j) {
-  const doors = roomDoorways(i, j).filter((d) => grid[d.y][d.x].t !== 'wall');
+function roomIsSealed(L, roomId) {
+  const doors = L.roomDoors[roomId];
   if (!doors.length) return false;
   return doors.every((d) => {
-    const t = grid[d.y][d.x];
+    const t = L.grid[d.y][d.x];
     return t.t === 'monster' || t.t === 'boss' || t.t === 'door';
   });
 }
 
 /** 这一层所有上锁的房（返回房间编号集合） */
-function sealedRoomsOf(grid) {
+function sealedRoomsOf(L) {
   const set = new Set();
-  for (let i = 0; i < ROOM_Y.length; i++) {
-    for (let j = 0; j < ROOM_X.length; j++) {
-      if (roomIsSealed(grid, i, j)) set.add(i * 3 + j);
-    }
+  for (const room of L.rooms) {
+    if (roomIsSealed(L, room.id)) set.add(room.id);
   }
   return set;
 }
@@ -160,10 +220,10 @@ function checkLevels() {
   console.log('\n=== 1. 关卡结构校验 ===');
   check('塔高 30 层', LEVELS.length === 30, `实际 ${LEVELS.length} 层`);
 
-  // 地图统一 13×13：九宫格房间 + 门洞
+  // 地图宽固定 15，高随树的高度变（每层房间树深浅不一样）
   const badSize = LEVELS.map((l, i) => ({ l, i }))
-    .filter(({ l }) => l.rows.length !== 13 || l.rows[0].length !== 13);
-  check('30 层地图都是 13×13', badSize.length === 0,
+    .filter(({ l }) => l.rows[0].length !== 15 || l.rows.length < 12 || l.rows.length > 18);
+  check('30 层地图都是 15 宽，高 12~18', badSize.length === 0,
     badSize.map(({ l, i }) => `第 ${i + 1} 层 ${l.rows.length}×${l.rows[0].length}`).join(' '));
 
   LEVELS.forEach((level, i) => {
@@ -291,6 +351,7 @@ function checkLevels() {
   const probe = createInitialState(findCharInLevel(0, '@'));
   LEVELS.forEach((level, i) => {
     const grid = getGrid(i);
+    const L = analyzeLayout(grid);
     const outside = [];
     let doorLock = null;
     grid.forEach((row, y) => row.forEach((t, x) => {
@@ -303,9 +364,9 @@ function checkLevels() {
       const precious = item.type === 'equip' || item.type === 'heart' ||
         (item.type === 'key' && item.lock === doorLock);
       if (!precious) return;
-      const room = roomOfCell(x, y);
-      if (!room) { outside.push(`${item.name}@(${x},${y}) 不在房间里`); return; }
-      if (!roomIsSealed(grid, room.i, room.j)) {
+      const roomId = L.roomOf[y][x];
+      if (roomId < 0) { outside.push(`${item.name}@(${x},${y}) 不在房间里`); return; }
+      if (!roomIsSealed(L, roomId)) {
         outside.push(`${item.name}@(${x},${y}) 所在房间有门没被堵住`);
       }
     }));
@@ -552,70 +613,71 @@ function checkWarpRules() {
 /* ------------------------------------------------------------------ */
 
 /**
- * 每层是一张 13×13 的九宫格：9 间 3×3 的房，
- * 墙在第 4 / 8 行和第 4 / 8 列，房间之间只在墙上开门洞。
- * 门洞的连法是一棵树 —— 有分叉、不绕圈，路不会是一条道走到黑。
+ * 每层是一张「树枝状」的地图：
+ *   底下一间大厅当树干，往上分成树枝、梢头是小房间；
+ *   房间大小各不相同（不是固定 3×3），
+ *   门洞连成一棵有分叉的树 —— 有分叉、不绕圈，路不会是一条道走到黑。
  */
 function checkRoomStructure() {
   console.log('\n=== 1d-2. 房间结构 ===');
   const bad = [];
+  const roomCounts = [];
+  const sizeMix = new Set();
   LEVELS.forEach((level, i) => {
     const grid = getGrid(i);
-    const H = grid.length, W = grid[0].length;
+    const L = analyzeLayout(grid);
 
-    // 9 间房：每间的 9 格都要能走
-    let rooms = 0;
-    for (let j = 0; j < ROOM_X.length; j++) {
-      for (let k = 0; k < ROOM_Y.length; k++) {
-        let full = true;
-        for (let y = ROOM_Y[k]; y < ROOM_Y[k] + 3; y++) {
-          for (let x = ROOM_X[j]; x < ROOM_X[j] + 3; x++) {
-            if (grid[y][x].t === 'wall') full = false;
-          }
-        }
-        if (full) rooms++;
+    // 每间房都要是一个填满的矩形
+    for (const room of L.rooms) {
+      if (room.cells.length !== room.w * room.h) {
+        bad.push(`第 ${i + 1} 层有一间房不是填满的矩形`);
       }
     }
-    if (rooms !== 9) bad.push(`第 ${i + 1} 层只有 ${rooms} 间完整的房`);
+    roomCounts.push(L.rooms.length);
+    for (const room of L.rooms) sizeMix.add(room.w + '×' + room.h);
 
-    // 门洞：走在墙线上、又能走的格子
-    const doorCells = [];
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        if (grid[y][x].t === 'wall') continue;
-        if (!isDoorwayCell(x, y)) continue;
-        doorCells.push({ x, y });
+    // 门洞：每个都要正好连着两间房
+    for (const d of L.doors) {
+      if (d.a < 0 || d.b < 0 || d.a === d.b) {
+        bad.push(`第 ${i + 1} 层门洞 (${d.x},${d.y}) 没连上两间房`);
       }
     }
-    if (doorCells.length !== 8) bad.push(`第 ${i + 1} 层有 ${doorCells.length} 个门洞（应 8 个）`);
 
-    // 门洞把 9 间房连成一棵树：连通 + 8 条边
-    const adj = new Map();
-    for (let k = 0; k < 9; k++) adj.set(k, new Set());
-    for (const d of doorCells) {
-      let a = null, b = null;
-      if (WALL_LINES.includes(d.x)) {
-        a = roomOfCell(d.x - 1, d.y);
-        b = roomOfCell(d.x + 1, d.y);
-      } else {
-        a = roomOfCell(d.x, d.y - 1);
-        b = roomOfCell(d.x, d.y + 1);
-      }
-      if (!a || !b) { bad.push(`第 ${i + 1} 层门洞 (${d.x},${d.y}) 没连上两间房`); continue; }
-      const ka = a.i * 3 + a.j, kb = b.i * 3 + b.j;
-      adj.get(ka).add(kb);
-      adj.get(kb).add(ka);
-    }
+    // 门洞把房间连成一棵树：连通 + 边数 = 房间数 - 1
     const seen = new Set([0]);
     const stack = [0];
     while (stack.length) {
       const cur = stack.pop();
-      for (const nx of adj.get(cur)) if (!seen.has(nx)) { seen.add(nx); stack.push(nx); }
+      for (const nx of L.adj[cur]) if (!seen.has(nx)) { seen.add(nx); stack.push(nx); }
     }
-    if (seen.size !== 9) bad.push(`第 ${i + 1} 层的房间没连成一片（只连到 ${seen.size} 间）`);
+    if (seen.size !== L.rooms.length) {
+      bad.push(`第 ${i + 1} 层的房间没连成一片（只连到 ${seen.size}/${L.rooms.length} 间）`);
+    }
+    const treeEdges = L.doors.filter((d) => d.a >= 0 && d.b >= 0 && d.a !== d.b).length;
+    if (treeEdges !== L.rooms.length - 1) {
+      bad.push(`第 ${i + 1} 层门洞 ${treeEdges} 条，应该正好 ${L.rooms.length - 1} 条`);
+    }
+
+    // 楼梯不能堵在门口：楼梯是「踩上去就换层」的格子，
+    // 一旦压在某个门口的落脚点上，那扇门就再也上不去了，门上面那条分支全被隔断。
+    // （上楼那扇锁着的门例外 —— 楼梯本来就在它正后方一格，是设计好的。）
+    for (const d of L.doorCells) {
+      if (grid[d.y][d.x].t === 'door') continue;
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const nx = d.x + dx, ny = d.y + dy;
+        const c = grid[ny] && grid[ny][nx];
+        if (!c) continue;
+        if (c.t === 'stairUp' || c.t === 'stairDown') {
+          bad.push(`第 ${i + 1} 层门洞 (${d.x},${d.y}) 挨着楼梯 (${nx},${ny})`);
+        }
+      }
+    }
   });
-  check('每层都是 9 间 3×3 的房、8 个门洞，连成一棵有分叉的树', bad.length === 0,
+  check('每层的房间都是填满的矩形，门洞连成一棵有分叉的树', bad.length === 0,
     bad.slice(0, 6).join(' '));
+  check('房间大小不都是 3×3（大小不一的房间）', sizeMix.size >= 8,
+    `出现过的尺寸：${[...sizeMix].sort().join(' ')}`);
+  check('每层至少 9 间房', roomCounts.every((n) => n >= 9), roomCounts.join(' '));
 }
 
 /* ------------------------------------------------------------------ */
@@ -657,8 +719,9 @@ function checkMonsterPosts() {
     };
     const isMonster = (a) => a && (a.t === 'monster' || a.t === 'boss');
 
+    const L = analyzeLayout(grid);
     // 这一层哪些房间是「上锁的」：每个门口都被怪或者锁着的门堵住
-    const locked = sealedRoomsOf(grid);
+    const locked = sealedRoomsOf(L);
 
     grid.forEach((row, y) => row.forEach((t, x) => {
       if (!isMonster(t)) return;
@@ -672,27 +735,21 @@ function checkMonsterPosts() {
 
       if (t.t !== 'monster') return;      // 魔王不参与站位规则
       checked++;
-      const room = roomOfCell(x, y);
-      const onDoor = isDoorwayCell(x, y);
+      const roomId = L.roomOf[y][x];
+      const onDoor = L.isDoor[y][x];
 
       if (t.id.startsWith('patrol_')) {
         patrols++;
         if (onDoor) {
           // 站在门口的巡逻怪必须是在堵一间上锁的房间
-          const near = [];
-          if (WALL_LINES.includes(x)) {
-            const a = roomOfCell(x - 1, y), b = roomOfCell(x + 1, y);
-            if (a) near.push(a.i * 3 + a.j);
-            if (b) near.push(b.i * 3 + b.j);
-          } else {
-            const a = roomOfCell(x, y - 1), b = roomOfCell(x, y + 1);
-            if (a) near.push(a.i * 3 + a.j);
-            if (b) near.push(b.i * 3 + b.j);
-          }
+          const near = L.doors
+            .filter((d) => d.x === x && d.y === y)
+            .flatMap((d) => [d.a, d.b])
+            .filter((k) => k >= 0);
           if (!near.some((k) => locked.has(k))) {
             bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 站在门口，但没在堵上锁的房间`);
           }
-        } else if (!room) {
+        } else if (roomId < 0) {
           bad.push(`第 ${i + 1} 层 ${t.id}@(${x},${y}) 既不在房间里也不在门口`);
         }
         return;
@@ -928,8 +985,9 @@ function checkHealRules() {
   }));
   if (crystal) {
     // 守着结晶的那只小鬼：站在结晶那间房的门口
-    const room = roomOfCell(crystal.x, crystal.y);
-    const doors = room ? roomDoorways(room.i, room.j).filter((d) => {
+    const L0 = analyzeLayout(g0);
+    const roomId = L0.roomOf[crystal.y][crystal.x];
+    const doors = roomId >= 0 ? L0.roomDoors[roomId].filter((d) => {
       const t = g0[d.y][d.x];
       return t && t.t === 'monster' && t.id === 'imp_1';
     }) : [];

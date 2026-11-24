@@ -10,6 +10,22 @@ import { MONSTERS } from '../data/monsters.js';
 export function createMapView(root) {
   let builtLevel = -1;
   let cells = [];
+  let lastState = null;   // 窗口尺寸变了要重建格子板，重建完还得把内容重新画一遍
+
+  /** 地图区能放下多宽多高：宽度减去侧栏，高度减去顶栏和日志栏 */
+  function cellSize(cols, rows) {
+    const availW = Math.max(240, window.innerWidth - 300);
+    const availH = Math.max(240, window.innerHeight - 190);
+    return Math.max(16, Math.min(38, Math.floor(availW / cols), Math.floor(availH / rows)));
+  }
+
+  // 窗口尺寸变了，格子大小要跟着重算。
+  // 只重建格子板是不够的 —— 新建的格子还是空的，得把上一帧的内容再画一遍。
+  window.addEventListener('resize', () => {
+    if (builtLevel < 0) return;
+    build(builtLevel);
+    if (lastState) render(lastState);
+  });
 
   function build(levelIndex) {
     const grid = getGrid(levelIndex);
@@ -17,8 +33,8 @@ export function createMapView(root) {
     const board = document.createElement('div');
     board.className = 'board';
     const n = grid[0].length;
-    // 格子边长跟着地图宽度收：13×13 用大格子，15×15 以上自动缩一档
-    board.style.setProperty('--cell', n >= 15 ? 'min(32px, 4.1vw, 4.1vh)' : 'min(38px, 4.6vw, 4.6vh)');
+    // 格子边长：宽高两个方向都得塞得下（每层地图大小不一样）
+    board.style.setProperty('--cell', cellSize(n, grid.length) + 'px');
     board.style.gridTemplateColumns = `repeat(${n}, var(--cell))`;
 
     cells = [];
@@ -37,6 +53,7 @@ export function createMapView(root) {
   }
 
   function render(state) {
+    lastState = state;
     if (builtLevel !== state.level) build(state.level);
 
     const grid = getGrid(state.level);
