@@ -1,6 +1,8 @@
 /**
  * 地图字符 -> 格子对象 的全局对照表（默认图例）。
  * 每层可以用 legend 覆盖某个字符的 id，这样同一个 's' 在不同层代表不同的剑。
+ *
+ * 一层 30 只怪、10 个物种：守关怪 1 只、三个看门怪各 1 只、巡逻怪六种性格共 26 只。
  */
 export const TILE_CHARS = {
   '#': { t: 'wall' },
@@ -29,9 +31,16 @@ export const TILE_CHARS = {
   'B': { t: 'item', id: 'monster_book' },   // 怪物图鉴（第 1 层出口）
 
   'G': { t: 'monster', id: 'guard_1' },   // 守关怪（每层 1 只）
-  'g': { t: 'monster', id: 'imp_1' },   // 看门怪：小鬼（每层 2 只，legend 指定具体楼层）
-  'k': { t: 'monster', id: 'spr_1' },   // 看门怪：史莱姆（每层 1 只，legend 指定具体楼层）
-  'v': { t: 'monster', id: 'patrol_1' },   // 巡逻怪：待在房间里（每层 26 只，legend 指定具体楼层）
+  'g': { t: 'monster', id: 'imp_1' },   // 看门怪：小鬼（legend 指定具体楼层）
+  'k': { t: 'monster', id: 'spr_1' },   // 看门怪：史莱姆（legend 指定具体楼层）
+  'm': { t: 'monster', id: 'hound_1' },   // 看门怪：恶犬（legend 指定具体楼层）
+  // 巡逻怪：六种性格，每层各来几只，legend 指定具体楼层
+  'v': { t: 'monster', id: 'patrol_a_1' },
+  'w': { t: 'monster', id: 'patrol_b_1' },
+  'p': { t: 'monster', id: 'patrol_c_1' },
+  'q': { t: 'monster', id: 'patrol_d_1' },
+  'e': { t: 'monster', id: 'patrol_e_1' },
+  'f': { t: 'monster', id: 'patrol_f_1' },
 };
 
 export const LOCK_NAMES = { yellow: '黄钥匙', blue: '蓝钥匙', red: '红钥匙' };

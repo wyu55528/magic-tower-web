@@ -2,17 +2,21 @@
  * 30 层塔的关卡生成器。
  *
  * 地图结构：每层一张「树枝状」的楼层。
- *   房间大小不一（2×2 ~ 5×4），从一个底部的根房间往上分叉；
- *   子房间不比父房间大，越往梢头越小 —— 看着像一棵树从塔里长出来。
- *   房间之间隔 1 格墙，墙上开门洞；门洞的连法就是房间树本身，
- *   所以路从树干分到树枝、再到树梢，有分叉、不绕圈。
+ *   房子 = 一间间小隔间（2~4 宽、2~3 高），上下左右都砌墙，只在墙上开一格门；
+ *   路   = 只留一格宽的横向走廊，一层一层往上分叉，走廊尽头接着下一层的隔间。
+ *   走廊行横着贯通整片树杈，隔间开在走廊边上 —— 所以全图没有两格宽的路。
+ *
+ * 竖着看，一层楼是这样码上去的（从下往上）：
+ *   [树干隔间] [顶墙] [走廊行] [门洞行] [树枝隔间] [顶墙] [走廊行] [门洞行] [梢头隔间]
+ *   每个房间只有一扇门（开在下墙），所以门永远不会撞车。
  *
  * 奖励与怪：
- *   5 间「上锁的房间」都在树梢上（彼此不相邻，门洞不会撞车），门口站着怪：
- *     守关怪守开门的钥匙、小鬼守生命结晶、史莱姆守商店 / 卷轴、小鬼守剑 / 盾。
+ *   5 间「上锁的房间」摆在树梢上，门口站着怪：
+ *     守关怪守开门的钥匙、小鬼守生命结晶、史莱姆守商店 / 卷轴、恶犬守剑 / 盾。
  *   往上那级楼梯的房间，门洞上就是锁着的门，楼梯在门后房间的最深处 ——
  *     进房间先打怪，再踩楼梯升层，楼梯不会堵在门口后面。
- *   巡逻怪散在各个房间里，门洞留空 —— 路上不会出现「一格接一格全是怪」。
+ *   巡逻怪散在各个隔间里，走廊上不放怪 —— 路上不会出现「一格接一格全是怪」。
+ *   一层 10 个物种：守关怪 1 只、看门怪 3 种各 1 只、巡逻怪六种性格共 26 只。
  *
  * 运行： node tools/gen-levels.mjs [随机种子]
  */
@@ -20,6 +24,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SWORDS, SHIELDS, FLOOR_COUNT, SHOP_FLOORS, atkOn, defOn, crystalOn, patrolCount } from '../js/data/balance.js';
+import { PATROL_SPECIES, GATE_SPECIES } from '../js/data/monsters.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LEVELS_FILE = join(ROOT, 'js', 'data', 'levels.js');
@@ -57,6 +62,16 @@ function keysOn(floor) {
   return out;
 }
 
+/**
+ * 每层 26 只巡逻怪在六种性格之间的分配。
+ * 基准是 5/5/4/4/4/4，按层轮换一下，哪层多哪种怪不固定。
+ */
+function patrolSplit(floor) {
+  const base = [5, 5, 4, 4, 4, 4];
+  const rot = (floor - 1) % base.length;
+  return base.slice(rot).concat(base.slice(0, rot));
+}
+
 /** 一层的完整方案 */
 function planOf(floor) {
   const atk = atkOn(floor);
@@ -66,9 +81,9 @@ function planOf(floor) {
     floor,
     name: '第 ' + floor + ' 层 · ' + FLOOR_NAMES[floor - 1],
     guardId: 'guard_' + floor,
-    impId: 'imp_' + floor,
-    sprId: 'spr_' + floor,
-    patrolId: 'patrol_' + floor,
+    gateIds: GATE_SPECIES.map((sp) => sp.key + '_' + floor),
+    patrolIds: PATROL_SPECIES.map((sp) => 'patrol_' + sp.key + '_' + floor),
+    patrolQuota: patrolSplit(floor),
     crystal: crystalOn(floor),
     sword: sword ? sword.id : null,
     shield: shield ? shield.id : null,
@@ -106,179 +121,168 @@ function shuffled(arr) {
   return a;
 }
 
-/* ---------------- 房间树（树形分块） ---------------- */
+/* ---------------- 房间树 ---------------- */
 const DIRS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const K = (x, y) => x + ',' + y;
 
-const CANVAS_W = 15;        // 画布宽度（房间总宽 = 宽 - 2，两侧各留 1 格外墙）
-const MAX_DEPTH = 3;        // 树最多几层房
+const CANVAS_W = 17;          // 画布宽度（两侧各留 1 郊外墙）
+const MAX_DEPTH = 3;          // 树干 → 树枝 → 小枝 → 梢头，一共四层房
+const SLOT_X0 = 1;
+const SLOT_X1 = CANVAS_W - 2;
+const MAX_H = 21;             // 画布最高这么多行，再高就重来
 
 /** 一个节点最多长几个孩子 */
 function maxKids(depth) {
-  if (depth === 0) return 3;
-  if (depth === 1) return 2;
+  if (depth === 0) return 4;
+  if (depth === 1) return 3;
   return 2;
 }
 
 /**
- * 树形分块：底下一间大厅当树干，往上分成树枝，梢头是小房间。
- *
- *   每个节点占自己那块地的一层：房间是底下的一条，房间上面留给孩子。
- *   横向按孩子数切成竖条，宽度随机分 —— 所以每间房大小都不一样。
- *   门洞就开在「房间和它孩子之间」的那道墙上。
+ * 房间树：每个节点占一段横向的地盘（slot），
+ * 横向按孩子数切成竖条分给它们，中间留 1 格墙。
+ * 越往梢头地盘越窄 —— 看着像一棵树从塔里长出来。
  */
-function planTree(rnd) {
+function buildTree(rnd) {
   const nodes = [];
-  function build(parentId, depth, x, w) {
+  function build(parentId, depth, x0, x1) {
     const id = nodes.length;
-    const node = {
-      id, parent: parentId, children: [], depth, x, w,
-      roomH: 2 + Math.floor(rnd() * 2),
-    };
+    const node = { id, parent: parentId, children: [], depth, x0, x1 };
     nodes.push(node);
-    if (depth >= MAX_DEPTH) return id;
+    if (depth >= MAX_DEPTH) {
+      const maxW = Math.min(4, x1 - x0 + 1);
+      node.w = 2 + Math.floor(rnd() * (maxW - 1));   // 隔间宽 2~4，但不能超出自己的地盘
+      node.h = 2 + Math.floor(rnd() * 2);           // 隔间高 2~3
+      return id;
+    }
+    const usable = x1 - x0 + 1;
     // 每个孩子至少 2 格宽，中间还要留 1 格墙
-    const maxK = Math.max(1, Math.min(maxKids(depth), Math.floor((w + 1) / 3)));
+    const maxK = Math.max(1, Math.min(maxKids(depth), Math.floor((usable + 1) / 3)));
     const k = 1 + Math.floor(rnd() * maxK);
-    const usable = w - (k - 1);
-    const base = Math.floor(usable / k);
-    const widths = new Array(k).fill(base);
-    for (let i = 0; i < usable - base * k; i++) widths[Math.floor(rnd() * k)]++;
-    let cx = x;
+    let rest = usable - k * 2 - (k - 1);       // 还能多分的宽度
+    const widths = new Array(k).fill(2);
+    for (let i = 0; i < rest; i++) widths[Math.floor(rnd() * k)]++;
+    let cx = x0;
     for (let i = 0; i < k; i++) {
-      const childId = build(id, depth + 1, cx, widths[i]);
+      const childId = build(id, depth + 1, cx, cx + widths[i] - 1);
       node.children.push(childId);
       cx += widths[i] + 1;
     }
+    const maxW = Math.min(4, usable);
+    node.w = 2 + Math.floor(rnd() * (maxW - 1));
+    node.h = 2 + Math.floor(rnd() * 2);
     return id;
   }
-  build(-1, 0, 1, CANVAS_W - 2);
-  // 高度：叶子就是自己那间房；中间节点 = 房高 + 1 格墙 + 最高的孩子
-  const calcH = (id) => {
-    const n = nodes[id];
-    if (!n.children.length) { n.subH = n.roomH; return n.subH; }
-    let m = 0;
-    for (const c of n.children) m = Math.max(m, calcH(c));
-    n.subH = n.roomH + 1 + m;
-    return n.subH;
-  };
-  calcH(0);
-  return {
-    nodes,
-    W: CANVAS_W,
-    H: nodes[0].subH + 2,
-    leaves: nodes.filter((n) => !n.children.length).length,
-  };
-}
-
-/** 把树摆进画布：房间是每块地的底下一条，孩子在它上面 */
-function layoutTree(plan, rnd) {
-  const { nodes, W, H } = plan;
-  const rooms = [];
-  const doors = [];
-  const place = (id, top, h) => {
-    const n = nodes[id];
-    const roomY = top + h - n.roomH;
-    rooms.push({ id, parent: n.parent, x: n.x, y: roomY, w: n.w, h: n.roomH, depth: n.depth, children: n.children.slice() });
-    if (!n.children.length) return;
-    const childH = h - n.roomH - 1;
-    for (const c of n.children) {
-      const cn = nodes[c];
-      place(c, top + childH - cn.subH, cn.subH);
-      // 门洞：房间和它孩子之间那道墙
-      doors.push({ x: cn.x + Math.floor(rnd() * cn.w), y: roomY - 1, a: id, b: c });
-    }
-  };
-  place(0, 1, nodes[0].subH);
-  return { W, H, rooms, doors, root: 0 };
-}
-
-/** 一次完整的房间树：定形 + 摆放 */
-function growRoomTree(rnd) {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const plan = planTree(rnd);
-    if (plan.nodes.length < 9) continue;      // 房间太少，5 间上锁的房放不下
-    return layoutTree(plan, rnd);
-  }
-  return null;
+  build(-1, 0, SLOT_X0, SLOT_X1);
+  return nodes;
 }
 
 /**
- * 树上挑 5 间互不相邻的房间（独立集）：
- *   上楼房取最深的那片树梢，其余优先也从树梢里挑，不够再从中间的房间补。
- *   互不相邻 = 两间房之间没有门洞，门洞不会撞车。
+ * 竖向排布：从下往上盖楼。
+ *   bottomY = 这个隔间下墙那一行（门就开在这行）
+ *   hubY    = 隔间顶上面那一行，1 格宽的走廊，横着贯通整片树杈
  */
-function pickSpecialRooms(map) {
-  const { rooms } = map;
-  const byId = new Map(rooms.map((r) => [r.id, r]));
-  const neighbors = (id) => {
-    const r = byId.get(id);
-    const out = [id];
-    if (r.parent >= 0) out.push(r.parent);
-    for (const c of r.children) out.push(c);
-    return out;
+function assignRows(nodes) {
+  const place = (node, bottomY) => {
+    node.bottomY = bottomY;
+    node.chamberY1 = bottomY - 1;
+    node.chamberY0 = bottomY - node.h;
+    node.topWallY = bottomY - node.h - 1;
+    node.hubY = bottomY - node.h - 2;
+    for (const c of node.children) place(nodes[c], node.hubY - 1);
   };
-  // 根房间（放往下那级楼梯）不能选：楼梯会盖掉房间正中间的东西
-  const leaves = rooms.filter((r) => r.children.length === 0 && r.id !== map.root).sort((a, b) => b.depth - a.depth);
-  if (!leaves.length) return [];
-  // 上楼房：树最高处那片梢头
-  const upRoom = leaves[0];
-  const chosen = [upRoom.id];
-  const taken = new Set(chosen);
-  const blocked = new Set(neighbors(upRoom.id));
-  const take = (r) => {
-    chosen.push(r.id);
-    taken.add(r.id);
-    for (const n of neighbors(r.id)) blocked.add(n);
-  };
-  // 其余 4 间：先从别的树梢里挑
-  for (const r of shuffled(leaves)) {
-    if (chosen.length >= 5) break;
-    if (taken.has(r.id) || blocked.has(r.id)) continue;
-    take(r);
+  place(nodes[0], 0);
+  let top = 0;
+  for (const n of nodes) top = Math.min(top, n.topWallY);
+  const shift = -top;                         // 让最上面那行贴到 0
+  for (const n of nodes) {
+    n.bottomY += shift;
+    n.chamberY1 += shift;
+    n.chamberY0 += shift;
+    n.topWallY += shift;
+    n.hubY += shift;
   }
-  // 还是不够：从剩下的房间里补（不和已选的相邻）
-  for (const r of shuffled(rooms)) {
+  return shift;                               // 根节点的下墙行 = 画布最底下一行
+}
+
+/** 隔间在横向地盘里的位置（居中偏一点，别贴着边） */
+function placeChambers(nodes, rnd) {
+  for (const n of nodes) {
+    const span = n.x1 - n.x0 + 1;
+    n.w = Math.max(2, Math.min(n.w, span));    // 房间不能超出自己的地盘
+    const jitter = Math.floor(rnd() * 3) - 1;
+    let cx0 = n.x0 + Math.floor((span - n.w) / 2) + jitter;
+    cx0 = Math.max(n.x0, Math.min(cx0, n.x1 - n.w + 1));
+    n.cx0 = cx0;
+    n.cx1 = cx0 + n.w - 1;
+  }
+}
+
+/** 把隔间、走廊、门画到格子上 */
+function carve(nodes, H, W) {
+  const grid = Array.from({ length: H }, () => new Array(W).fill(0));
+  const set = (x, y) => {
+    if (x >= 0 && y >= 0 && y < H && x < W) grid[y][x] = 1;
+  };
+  // 走廊行：每个有孩子的节点，在自己的地盘上横着铺一条 1 格宽的路
+  for (const n of nodes) {
+    if (!n.children.length) continue;
+    for (let x = n.x0; x <= n.x1; x++) set(x, n.hubY);
+  }
+  // 隔间
+  for (const n of nodes) {
+    for (let y = n.chamberY0; y <= n.chamberY1; y++) {
+      for (let x = n.cx0; x <= n.cx1; x++) set(x, y);
+    }
+  }
+  // 门洞：每个隔间下墙那一行开一格门。
+  // 同一行里的两扇门不能挨着 —— 门洞上站着怪的话，两只怪就贴上了。
+  const doorsInRow = new Map();
+  for (const n of nodes) {
+    if (n.parent < 0) continue;               // 根没有门
+    const taken = doorsInRow.get(n.bottomY) || [];
+    let dx = n.cx0 + Math.floor(rnd() * n.w);
+    while (taken.some((x) => Math.abs(x - dx) === 1) && dx < n.cx1) dx++;
+    while (taken.some((x) => Math.abs(x - dx) === 1) && dx > n.cx0) dx--;
+    n.doorX = dx;
+    taken.push(dx);
+    doorsInRow.set(n.bottomY, taken);
+    set(n.doorX, n.bottomY);
+  }
+  // 房顶的门：往上一层走廊的门，只有有孩子的隔间才有
+  for (const n of nodes) {
+    if (!n.children.length) continue;
+    n.topDoorX = n.cx0 + Math.floor(rnd() * n.w);
+    set(n.topDoorX, n.topWallY);
+  }
+  return grid;
+}
+
+/* ---------------- 摆东西 ---------------- */
+
+/**
+ * 树上挑 5 间房：上楼房取树梢（最深的一片），其余也从梢头挑。
+ * 不用再怕门撞车 —— 每个房间只有一扇门，门天生就不重样。
+ */
+function pickSpecialRooms(nodes) {
+  const byDepth = (d) => nodes.filter((n) => n.depth === d && n.parent >= 0);
+  const deep = shuffled(byDepth(MAX_DEPTH));
+  const mid = shuffled(byDepth(MAX_DEPTH - 1));
+  const chosen = [];
+  const upRoom = deep[0] || mid[0];
+  if (!upRoom) return [];
+  chosen.push(upRoom);
+  for (const n of deep.concat(mid)) {
     if (chosen.length >= 5) break;
-    if (r.id === map.root) continue;
-    if (taken.has(r.id) || blocked.has(r.id)) continue;
-    take(r);
+    if (chosen.includes(n)) continue;
+    chosen.push(n);
   }
   return chosen;
 }
-/* ---------------- 造一张图 ---------------- */
-function buildMap(tree) {
-  const { W, H, rooms, doors } = tree;
-  const grid = Array.from({ length: H }, () => new Array(W).fill(0));
-  const roomOf = Array.from({ length: H }, () => new Array(W).fill(-1));
-  const doorAt = Array.from({ length: H }, () => new Array(W).fill(null));
-  for (const r of rooms) {
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) { grid[y][x] = 1; roomOf[y][x] = r.id; }
-    }
-  }
-  const roomDoors = rooms.map(() => []);
-  for (const d of doors) {
-    grid[d.y][d.x] = 1;
-    doorAt[d.y][d.x] = d;
-    roomDoors[d.a].push(d);
-    roomDoors[d.b].push(d);
-  }
-  return { grid, roomOf, doorAt, rooms, doors, roomDoors, W, H, root: tree.root };
-}
-
-/** 挨着门洞、属于某一间房的那一格 */
-function insideNeighbor(map, door, roomIdx) {
-  for (const dir of DIRS) {
-    const x = door.x + dir[0], y = door.y + dir[1];
-    if (map.roomOf[y] && map.roomOf[y][x] === roomIdx) return { x, y };
-  }
-  return null;
-}
 
 /** 房间正中间那一格（偶数边长取靠左 / 靠上的一格） */
-function roomCenter(room) {
-  return { x: room.x + Math.floor((room.w - 1) / 2), y: room.y + Math.floor((room.h - 1) / 2) };
+function roomCenter(n) {
+  return { x: n.cx0 + Math.floor((n.w - 1) / 2), y: n.chamberY0 + Math.floor((n.h - 1) / 2) };
 }
 
 /**
@@ -289,16 +293,18 @@ function roomCenter(room) {
  * 玩家只能先升上去、再走下来才能清怪。
  * 所以楼梯放在房间最深處，进门后先走一段、打掉路上的怪，再踩楼梯。
  */
-function deepestCellInRoom(room, from) {
+function deepestCellInRoom(n, from, blocked) {
   const cells = [];
-  for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) {
+  for (let y = n.chamberY0; y <= n.chamberY1; y++) {
+    for (let x = n.cx0; x <= n.cx1; x++) {
+      if (blocked && blocked.some((b) => b.x === x && b.y === y)) continue;
       cells.push({ x, y, d: Math.abs(x - from.x) + Math.abs(y - from.y) });
     }
   }
+  if (!cells.length) return null;
   const maxD = Math.max(...cells.map((c) => c.d));
   const far = cells.filter((c) => c.d === maxD);
-  const mid = roomCenter(room);
+  const mid = roomCenter(n);
   far.sort((a, b) => {
     const da = Math.abs(a.x - mid.x) + Math.abs(a.y - mid.y);
     const db = Math.abs(b.x - mid.x) + Math.abs(b.y - mid.y);
@@ -308,33 +314,21 @@ function deepestCellInRoom(room, from) {
 }
 
 /**
- * 根房间里放「往下那级楼梯」的格子。
+ * 根隔间里放「往下那级楼梯」的格子。
  *
- * 门口正下方那一格不能放楼梯：楼梯是「踩上去就掉层」的格子，
- * 一旦它压在某个门口的唯一落脚点上，那扇门就再也上不去了，
- * 门上面那一整条分支会被整个隔断。
- * 所以这里避开所有门口内侧的落脚格，并要求楼梯四周至少还有两格地板，
+ * 楼梯是「踩上去就掉层」的格子，压在门口的落脚点上会把门堵死，
+ * 所以这里避开房顶那扇门和所有门内侧的落脚格，并要求楼梯四周还有两格地板，
  * 换层落点才有地方站。
  */
-function pickDownCell(map, room) {
-  const blocked = new Set();
-  for (const d of map.roomDoors[room.id]) {
-    const n = insideNeighbor(map, d, room.id);
-    if (n) blocked.add(K(n.x, n.y));
-    // 门洞周围一格也不放楼梯：踩上去就换层，等于把门堵死
-    for (const [dx, dy] of DIRS) {
-      if (dx === 0 && dy === 0) continue;
-      blocked.add(K(d.x + dx, d.y + dy));
-    }
-  }
+function pickDownCell(root, blocked) {
   const cands = [];
-  for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) {
+  for (let y = root.chamberY0; y <= root.chamberY1; y++) {
+    for (let x = root.cx0; x <= root.cx1; x++) {
       if (blocked.has(K(x, y))) continue;
       let around = 0;
       for (const [dx, dy] of DIRS) {
         const nx = x + dx, ny = y + dy;
-        if (nx < room.x || ny < room.y || nx >= room.x + room.w || ny >= room.y + room.h) continue;
+        if (nx < root.cx0 || ny < root.chamberY0 || nx > root.cx1 || ny > root.chamberY1) continue;
         around++;
       }
       if (around < 2) continue;
@@ -346,16 +340,14 @@ function pickDownCell(map, room) {
 
 function fail(reason) { return { fail: reason }; }
 
-/* ---------------- 摆东西 ---------------- */
 function tryPlace(map, plan) {
-  const { grid, rooms, roomDoors } = map;
+  const { grid, nodes } = map;
   const placed = new Map();
   const used = new Set();
   const put = (cell, ch) => placed.set(K(cell.x, cell.y), ch);
   const isTaken = (cell) => placed.has(K(cell.x, cell.y)) || used.has(K(cell.x, cell.y));
 
-  // 5 间上锁的房间：树梢上的独立集，彼此不相邻，门洞不会撞车
-  const special = pickSpecialRooms(map);
+  const special = pickSpecialRooms(nodes);
   if (special.length < 5) return fail('special');
   const upRoom = special[0];
   const restRoles = special.slice(1);
@@ -363,74 +355,82 @@ function tryPlace(map, plan) {
   const cryRoom = restRoles[1];
   const nookRoom = restRoles[2];
   const eqRoom = restRoles[3];
-  const downRoom = map.root;      // 树干底：往下那级楼梯 / 出生点
-
-  // 房间有两个门时，另一个门也得有人守着，否则能从别的门绕进去
-  const extraBlockers = [];
-  const guard = (roomIdx, ch) => {
-    const ds = roomDoors[roomIdx];
-    if (!ds.length) return false;
-    put(ds[0], ch);
-    for (let i = 1; i < ds.length; i++) extraBlockers.push(ds[i]);
-    return true;
-  };
+  const root = nodes[0];
 
   // 往上那级楼梯（末层是魔王）：门洞上是锁着的门，楼梯在门后房间的最深处
-  const upDoors = roomDoors[upRoom];
-  if (!upDoors.length) return fail('updoor');
-  const upDoor = upDoors[0];
-  const otherOfUp = upDoor.a === upRoom ? upDoor.b : upDoor.a;
-  // 楼梯放在门后房间的最深处：进门先打怪，再踩楼梯升层
-  const stairCell = deepestCellInRoom(rooms[upRoom], upDoor);
-  const outsideCell = insideNeighbor(map, upDoor, otherOfUp);
-  if (!stairCell || !outsideCell) return fail('stair');
+  const upInner = { x: upRoom.doorX, y: upRoom.chamberY1 };   // 门内侧那一格
+  // 楼梯 / 魔王不能压在门内侧那一格，也不能跟它挨着 ——
+  // 进门先撞上守门的怪，再往里走才踩得到楼梯。
+  const stairBlocked = [upInner];
+  for (const [dx, dy] of DIRS) {
+    stairBlocked.push({ x: upInner.x + dx, y: upInner.y + dy });
+  }
+  const stairCell = deepestCellInRoom(upRoom, upInner, stairBlocked);
+  if (!stairCell) return fail('stair');
   put(stairCell, plan.isLast ? 'X' : '>');
-  put(upDoor, DOOR_CHARS[plan.doorLock]);
-  for (let i = 1; i < upDoors.length; i++) extraBlockers.push(upDoors[i]);
+  put({ x: upRoom.doorX, y: upRoom.bottomY }, DOOR_CHARS[plan.doorLock]);
 
-  // 上楼那间房：门正后方一格必须站一只巡逻怪。
+  // 上楼那间房：门正后方一格必须站一只怪。
   // 楼梯已经挪到房间最深处（不会一进门就升层），
   // 但光「进得去」还不够 —— 得有一只怪挡在门口，
   // 玩家清掉它才能往里走，房里的怪才真的打得了，不用上去再下来。
-  const upInner = insideNeighbor(map, upDoor, upRoom);
   let forcedPatrol = 0;
-  if (upInner && !isTaken(upInner) && (upInner.x !== stairCell.x || upInner.y !== stairCell.y)) {
-    put(upInner, 'v');
+  if (!isTaken(upInner)) {
+    put(upInner, PATROL_SPECIES[0].char);
     forcedPatrol = 1;
   }
+  if (!forcedPatrol) return fail('forced');
 
-  // 守关怪堵在钥匙房门口，钥匙在房间正中间
-  if (!guard(keyRoom, 'G')) return fail('keydoor');
-  put(roomCenter(rooms[keyRoom]), plan.keys.find((k) => k.role === 'door').ch);
+  // 这些怪的四邻不能站别的怪：门口的强制怪，还有末层的魔王
+  const noAdjacent = [upInner];
+  if (plan.isLast) noAdjacent.push(stairCell);
 
-  // 小鬼堵在结晶房门口，生命结晶在房间正中间
-  if (!guard(cryRoom, 'g')) return fail('crydoor');
-  put(roomCenter(rooms[cryRoom]), 'h');
+  // 看门怪：守关怪堵在钥匙房门口，小鬼守结晶房，史莱姆守杂物房，恶犬守装备房
+  const gateChars = GATE_SPECIES.map((sp) => sp.char);
+  const guarded = [
+    { room: keyRoom, char: 'G' },
+    { room: cryRoom, char: gateChars[0] },
+    { room: nookRoom, char: gateChars[1] },
+    { room: eqRoom, char: gateChars[2] },
+  ];
+  for (const g of guarded) {
+    put({ x: g.room.doorX, y: g.room.bottomY }, g.char);
+  }
 
-  // 史莱姆堵在杂物房门口，商店 / 卷轴 / 备用钥匙在房间正中间
-  if (!guard(nookRoom, 'k')) return fail('nookdoor');
+  // 钥匙在房间正中间
+  put(roomCenter(keyRoom), plan.keys.find((k) => k.role === 'door').ch);
+  // 生命结晶在房间正中间
+  put(roomCenter(cryRoom), 'h');
+  // 商店 / 卷轴 / 备用钥匙在杂物房正中间
   const spare = plan.keys.find((k) => k.role === 'spare');
-  const nookCell = roomCenter(rooms[nookRoom]);
+  const nookCell = roomCenter(nookRoom);
   if (plan.hasWarp) put(nookCell, 'W');
   else if (plan.hasShop) put(nookCell, 'S');
   else if (spare) put(nookCell, spare.ch);
   else put(nookCell, '%');
-
-  // 小鬼堵在装备房门口，剑 / 盾在房间正中间
-  if (!guard(eqRoom, 'g')) return fail('eqdoor');
-  const eqCell = roomCenter(rooms[eqRoom]);
+  // 剑 / 盾在装备房正中间
+  const eqCell = roomCenter(eqRoom);
   if (plan.sword) put(eqCell, 's');
   else if (plan.shield) put(eqCell, 't');
   else put(eqCell, '%');
 
-  // 第 1 层的怪物图鉴放在门外（书 → 门 → 楼梯，三格一线）
+  // 第 1 层的怪物图鉴放在锁着的门外面一格（进门就捡得到）
   if (plan.hasBook) {
-    put(outsideCell, 'B');
-    used.add(K(outsideCell.x, outsideCell.y));
+    const outside = { x: upRoom.doorX, y: upRoom.bottomY + 1 };   // 门外面那一格（走廊上）
+    if (!isTaken(outside)) {
+      put(outside, 'B');
+      used.add(K(outside.x, outside.y));
+    }
   }
 
   // 往下走回上一层的楼梯（第 1 层是出生点）
-  const downCell = pickDownCell(map, rooms[downRoom]);
+  const blocked = new Set();
+  // 房顶那扇门和所有门内侧的落脚格都不能放楼梯
+  for (const n of nodes) {
+    if (n.parent >= 0) blocked.add(K(n.doorX, n.chamberY1));
+    if (n.children.length) blocked.add(K(n.topDoorX, n.chamberY0));
+  }
+  const downCell = pickDownCell(root, blocked);
   if (!downCell) return fail('downcell');
   let arrival = null;
   if (plan.floor === 1) {
@@ -439,9 +439,9 @@ function tryPlace(map, plan) {
   } else {
     put(downCell, '<');
     const options = [];
-    for (const dir of DIRS) {
-      const c = { x: downCell.x + dir[0], y: downCell.y + dir[1] };
-      if (!map.roomOf[c.y] || map.roomOf[c.y][c.x] !== downRoom) continue;
+    for (const [dx, dy] of DIRS) {
+      const c = { x: downCell.x + dx[0], y: downCell.y + dy[1] };
+      if (c.x < root.cx0 || c.y < root.chamberY0 || c.x > root.cx1 || c.y > root.chamberY1) continue;
       if (isTaken(c)) continue;
       options.push(c);
     }
@@ -450,24 +450,13 @@ function tryPlace(map, plan) {
     used.add(K(arrival.x, arrival.y));
   }
 
-  // 门口旁边的格子留空 —— 看门怪就站在门口，挨着的格子不能再站怪
-  const onDoor = (c) => map.doors.some((d) => d.x === c.x && d.y === c.y);
-  const nearDoor = (c) => map.doors.some((d) => Math.abs(d.x - c.x) + Math.abs(d.y - c.y) === 1);
-  const nearStair = (c) =>
-    Math.abs(stairCell.x - c.x) + Math.abs(stairCell.y - c.y) <= 1 ||
-    Math.abs(downCell.x - c.x) + Math.abs(downCell.y - c.y) <= 1;
-  // 门口那只强制怪的隔壁不能再站怪（两只怪不挨着）
-  const nearForced = (c) =>
-    forcedPatrol && Math.abs(c.x - upInner.x) + Math.abs(c.y - upInner.y) === 1;
-
-  // 金币和备用钥匙：摊在房间的空地上
+  // 金币和备用钥匙：摊在隔间的空地上
   const loose = [];
-  for (const r of rooms) {
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) {
+  for (const n of nodes) {
+    for (let y = n.chamberY0; y <= n.chamberY1; y++) {
+      for (let x = n.cx0; x <= n.cx1; x++) {
         const c = { x, y };
         if (isTaken(c)) continue;
-        if (onDoor(c)) continue;
         loose.push(c);
       }
     }
@@ -482,43 +471,64 @@ function tryPlace(map, plan) {
     put(loosePool.pop(), spare.ch);
   }
 
-  // 巡逻怪：放在房间里的棋盘格位置 —— 同色格子互不相邻，天然不会连成一片
+  // 巡逻怪：放在隔间里的棋盘格位置 —— 同色格子互不相邻，天然不会连成一片
+  const doorInner = new Set();
+  for (const n of nodes) {
+    if (n.parent >= 0) doorInner.add(K(n.doorX, n.chamberY1));
+  }
+  const nearForced = (c) =>
+    noAdjacent.some((b) => Math.abs(c.x - b.x) + Math.abs(c.y - b.y) === 1);
+
   const candidates = new Map();
-  for (const r of rooms) {
+  for (const n of nodes) {
     const cells = [];
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) {
+    for (let y = n.chamberY0; y <= n.chamberY1; y++) {
+      for (let x = n.cx0; x <= n.cx1; x++) {
         const c = { x, y };
         if (isTaken(c)) continue;
-        if (onDoor(c)) continue;
-        if (nearDoor(c)) continue;
-        if (nearStair(c)) continue;
-        if (nearForced(c)) continue;
+        if (doorInner.has(K(x, y))) continue;   // 门内侧那一格留给看门怪
+        if (nearForced(c)) continue;           // 门口那只强制怪的隔壁不能再站怪
         cells.push(c);
       }
     }
     const even = cells.filter((c) => (c.x + c.y) % 2 === 0);
     const odd = cells.filter((c) => (c.x + c.y) % 2 === 1);
     const same = even.length >= odd.length ? even : odd;
-    candidates.set(r.id, shuffled(same));
+    candidates.set(n.id, shuffled(same));
   }
 
-  const need = patrolCount(plan.floor) - extraBlockers.length - forcedPatrol;
-  const roomOrder = shuffled(rooms.map((r) => r.id));
+  // 六种性格按配额铺开
+  const quota = plan.patrolQuota.slice();
+  quota[0] -= forcedPatrol;                   // 门口那只强制怪算在基准性格里
+  const byChar = new Map();
+  PATROL_SPECIES.forEach((sp, i) => byChar.set(sp.char, { count: quota[i], char: sp.char }));
+
+  const need = totalNeeded(byChar);
+  const roomOrder = shuffled(nodes.map((n) => n.id));
   const chosen = [];
   for (;;) {
     let progressed = false;
     for (const rid of roomOrder) {
-      const list = candidates.get(rid);
-      if (list && list.length) { chosen.push(list.pop()); progressed = true; }
+      for (const info of byChar.values()) {
+        if (info.count <= 0) continue;
+        const list = candidates.get(rid);
+        if (list && list.length) {
+          chosen.push({ cell: list.pop(), ch: info.char });
+          info.count--;
+          progressed = true;
+          break;
+        }
+      }
       if (chosen.length >= need) break;
     }
     if (!progressed || chosen.length >= need) break;
   }
-  if (chosen.length < need) return fail('patrol:' + chosen.length);
-  for (const c of chosen) put(c, 'v');
-  // 多门上锁房多出来的门口，得有人堵着
-  for (const c of extraBlockers) put(c, 'v');
+  if (chosen.length < need) return fail('patrol:' + chosen.length + '/' + need);
+  for (const c of chosen) put(c.cell, c.ch);
+
+  // 一层怪数必须是设计值：守关怪 1 + 看门怪 3 + 巡逻怪 26
+  const monsterTotal = 4 + forcedPatrol + chosen.length;
+  if (monsterTotal !== patrolCount(plan.floor) + 4) return fail('count:' + monsterTotal);
 
   // 组装字符图
   const rows = grid.map((row) => row.map((v) => (v === 1 ? '.' : '#')));
@@ -529,13 +539,23 @@ function tryPlace(map, plan) {
   return { rows };
 }
 
+/** 巡逻怪一共要放多少只 */
+function totalNeeded(byChar) {
+  let n = 0;
+  for (const info of byChar.values()) n += info.count;
+  return n;
+}
+
 /* ---------------- 输出 ---------------- */
 function legendOf(plan) {
   const lines = [];
   lines.push('          G: ' + JSON.stringify(plan.guardId) + ',');
-  lines.push('          g: ' + JSON.stringify(plan.impId) + ',');
-  lines.push('          k: ' + JSON.stringify(plan.sprId) + ',');
-  lines.push('          v: ' + JSON.stringify(plan.patrolId) + ',');
+  GATE_SPECIES.forEach((sp, i) => {
+    lines.push('          ' + sp.char + ': ' + JSON.stringify(plan.gateIds[i]) + ',');
+  });
+  PATROL_SPECIES.forEach((sp, i) => {
+    lines.push('          ' + sp.char + ': ' + JSON.stringify(plan.patrolIds[i]) + ',');
+  });
   if (plan.sword) lines.push('          s: ' + JSON.stringify(plan.sword) + ',');
   if (plan.shield) lines.push('          t: ' + JSON.stringify(plan.shield) + ',');
   lines.push('          h: { id: "life_crystal", hp: ' + plan.crystal + ' },');
@@ -565,14 +585,19 @@ function emit(placed) {
   return body;
 }
 
-/** 量一层的密度指标，顺便查有没有两只怪挨着 */
+/**
+ * 量一层的密度指标，顺便查有没有两只怪挨着、
+ * 有没有哪条路宽到了两格（房间之外的地方必须全是 1 格宽）。
+ */
 function measure(rows) {
   const N = rows.length;
+  const M = rows[0].length;
   let wall = 0, open = 0, dead = 0, junction = 0, mons = 0, openSquares = 0;
   const monsterCells = [];
-  const isMonster = (ch) => ch === 'G' || ch === 'g' || ch === 'k' || ch === 'v' || ch === 'X';
+  const isMonster = (ch) => ch === 'G' || ch === 'g' || ch === 'k' || ch === 'm'
+    || 'vwpqef'.includes(ch) || ch === 'X';
   for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
+    for (let x = 0; x < M; x++) {
       const ch = rows[y][x];
       if (ch === '#') { wall++; continue; }
       open++;
@@ -613,22 +638,38 @@ function main() {
     let ok = null;
     let lastFail = '?';
     for (let attempt = 0; attempt < 400 && !ok; attempt++) {
-      const tree = growRoomTree(rnd);
-      if (!tree) continue;
-      const map = buildMap(tree);
+      const nodes = buildTree(rnd);
+      if (nodes.length < 9) continue;              // 房间太少，5 间上锁的房放不下
+      const shift = assignRows(nodes);
+      const H = shift + 1;
+      if (H > MAX_H) continue;                     // 太高了，换一棵树
+      placeChambers(nodes, rnd);
+      const grid = carve(nodes, H, CANVAS_W);
+      const map = { grid, nodes, H, W: CANVAS_W };
       const r = tryPlace(map, plan);
       if (r && r.fail) { lastFail = r.fail; continue; }
       ok = r;
-      ok.tree = tree;
+      ok.nodes = nodes;
     }
     if (!ok) {
       console.error('第 ' + f + ' 层摆不下（原因 ' + lastFail + '）。');
       process.exit(1);
     }
     placed.push(ok);
+    if (process.env.DBG_FLOOR && f === Number(process.env.DBG_FLOOR)) {
+      console.log('DBG 第 ' + f + ' 层：');
+      for (const n of ok.nodes) {
+        console.log('  #' + n.id + ' d' + n.depth +
+          ' slot[' + n.x0 + '-' + n.x1 + ']' +
+          ' 房[' + n.cx0 + '-' + n.cx1 + ']x[' + n.chamberY0 + '-' + n.chamberY1 + ']' +
+          ' 门x=' + (n.doorX === undefined ? '-' : n.doorX) +
+          ' 门行=' + n.bottomY + ' 走廊行=' + n.hubY +
+          ' 父=' + n.parent);
+      }
+      ok.rows.forEach((r, y) => console.log('  ' + String(y).padStart(2) + ' |' + r.join('') + '|'));
+    }
     const m = measure(ok.rows);
-    m.rooms = ok.tree.rooms.length;
-    m.doors = ok.tree.doors.length;
+    m.rooms = ok.nodes.length;
     m.size = ok.rows.length + '×' + ok.rows[0].length;
     stats.push(m);
   }
@@ -645,21 +686,21 @@ function main() {
 
   const sum = (key) => stats.reduce((n, s) => n + s[key], 0);
   const avg = (key) => (sum(key) / FLOOR_COUNT).toFixed(1);
-  console.log('种子 ' + SEED + '，画布宽 ' + CANVAS_W + '，树最多 ' + MAX_DEPTH + ' 层');
-  console.log('平均每层 ' + avg('rooms') + ' 间房、' + avg('doors') + ' 个门洞，尺寸 ' + stats[0].size + ' 起');
+  console.log('种子 ' + SEED + '，画布宽 ' + CANVAS_W + '，树 ' + (MAX_DEPTH + 1) + ' 层房');
+  console.log('平均每层 ' + avg('rooms') + ' 间房，尺寸 ' + stats[0].size + ' 起');
   console.log('墙占比 ' + (sum('wall') / (sum('wall') + sum('open')) * 100).toFixed(1) +
     '%，平均每层空地 ' + avg('open') + ' 格');
   console.log('平均每层怪 ' + avg('mons') + ' 只，挨着的怪对数 ' + sum('adjacent') + '（必须是 0）');
-  console.log('平均每层开阔地（2×2 空地）' + avg('openSquares') + ' 处、岔口 ' + avg('junction') + ' 个');
+  console.log('平均每层 2×2 空地 ' + avg('openSquares') + ' 处（房间内部才有）、岔口 ' + avg('junction') + ' 个');
   if (process.argv.includes('--print')) {
     for (const i of [0, 1, 2]) {
-      console.log('\n第 ' + (i + 1) + ' 层（' + stats[i].rooms + ' 间房 / ' + stats[i].doors + ' 个门洞）：');
+      console.log('\n第 ' + (i + 1) + ' 层（' + stats[i].rooms + ' 间房）：');
       placed[i].rows.forEach((r) => console.log('  ' + r.join('')));
     }
   }
   console.log('已写入 ' + LEVELS_FILE);
 }
 
-export { growRoomTree, buildMap, tryPlace, planOf, rnd, pickSpecialRooms, roomCenter, measure };
+export { buildTree, assignRows, placeChambers, carve, tryPlace, planOf, measure, pickSpecialRooms };
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('tools/gen-levels.mjs')) main();
