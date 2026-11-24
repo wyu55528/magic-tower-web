@@ -272,11 +272,12 @@ function checkLevels() {
     }));
     const manhattan = (a, c) => Math.abs(a.x - c.x) + Math.abs(a.y - c.y);
     const aligned = (a, c) => (a.x === c.x) !== (a.y === c.y);   // 同一行或同一列
-    check('怪物图鉴书就在第 1 层出口（书 → 门 → 往上爬的楼梯，三格一线）',
-      !!door && !!stair &&
-      manhattan(b, door) === 1 && manhattan(door, stair) === 1 &&
-      aligned(b, door) && aligned(door, stair) && (b.x === stair.x || b.y === stair.y),
-      `书 (${b.x},${b.y}) 门 (${door ? door.x : '-'},${door ? door.y : '-'}) 楼梯 (${stair ? stair.x : '-'},${stair ? stair.y : '-'})`);
+    check('怪物图鉴书就放在第 1 层那扇锁着的门外面一格（进门就捡得到）',
+      !!door && manhattan(b, door) === 1 && aligned(b, door),
+      `书 (${b.x},${b.y}) 门 (${door ? door.x : '-'},${door ? door.y : '-'})`);
+    check('上楼梯离锁着的门至少隔一格（不会一进门就换层）',
+      !!door && !!stair && manhattan(door, stair) >= 2,
+      `门 (${door ? door.x : '-'},${door ? door.y : '-'}) 楼梯 (${stair ? stair.x : '-'},${stair ? stair.y : '-'})`);
     check('怪物图鉴是可翻开的道具（type = book）',
       ITEMS.monster_book && ITEMS.monster_book.type === 'book', JSON.stringify(ITEMS.monster_book));
   }
@@ -390,12 +391,10 @@ function checkLevels() {
       check(`第 ${i + 1} 层：封死所有门和怪，上楼楼梯就上不去`,
         !sealed.has(stair.x + ',' + stair.y),
         sealed.has(stair.x + ',' + stair.y) ? '门和怪全封死后楼梯仍可达' : '');
-      const behind = neighborsOf(i, stair.x, stair.y).some((k) => {
-        const [x, y] = k.split(',').map(Number);
-        return grid[y][x].t === 'door';
-      });
-      check(`第 ${i + 1} 层：上楼楼梯就在锁着的门正后方`, behind,
-        `楼梯 (${stair.x},${stair.y})`);
+      // 楼梯不能堵在门口后面：踩上去就换层，房间里的怪一只都打不了
+      const dDoor = Math.min(...doors.map((d) => Math.abs(d.x - stair.x) + Math.abs(d.y - stair.y)));
+      check(`第 ${i + 1} 层：上楼梯离锁着的门至少隔一格`, dDoor >= 2,
+        `楼梯 (${stair.x},${stair.y}) 离最近的门 ${dDoor} 格`);
     }
 
     // 能开本层门的钥匙必须被守关怪挡在后面
@@ -488,6 +487,7 @@ function checkMapDensity() {
     `共 ${openSquaresPerLevel.reduce((n, v) => n + v, 0)} 处 2×2 空地`);
 
   checkRoomStructure();
+  checkStairNotBlockingDoor();
 
   const minMon = Math.min(...monCounts);
   const maxMon = Math.max(...monCounts);
@@ -659,10 +659,9 @@ function checkRoomStructure() {
     }
 
     // 楼梯不能堵在门口：楼梯是「踩上去就换层」的格子，
-    // 一旦压在某个门口的落脚点上，那扇门就再也上不去了，门上面那条分支全被隔断。
-    // （上楼那扇锁着的门例外 —— 楼梯本来就在它正后方一格，是设计好的。）
+    // 一旦压在某个门口旁边，玩家一进门就被送上楼 / 送下楼，
+    // 房间里的怪只能上去再下来才能清，门洞也就废了。
     for (const d of L.doorCells) {
-      if (grid[d.y][d.x].t === 'door') continue;
       for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
         const nx = d.x + dx, ny = d.y + dy;
         const c = grid[ny] && grid[ny][nx];
@@ -678,6 +677,84 @@ function checkRoomStructure() {
   check('房间大小不都是 3×3（大小不一的房间）', sizeMix.size >= 8,
     `出现过的尺寸：${[...sizeMix].sort().join(' ')}`);
   check('每层至少 9 间房', roomCounts.every((n) => n >= 9), roomCounts.join(' '));
+}
+
+/* ------------------------------------------------------------------ */
+/* 1d-3. 楼梯口不许堵在门口后面                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 楼梯是「踩上去就换层」的格子。它要是堵在门口后面：
+ *   - 玩家一进门就被送走，房间里的怪一只都打不了，只能上去再下来；
+ *   - 门也废了，门后面那条分支谁都进不去。
+ *
+ * 所以两条硬规矩：
+ *   1) 上楼梯放在门后房间的最深处，离锁着的门至少隔一格地板；
+ *   2) 门正后方那一格必须站着怪 —— 进门就得先清怪，清完才接得上楼梯。
+ * 往下那级楼梯放在根大厅里，离任何门洞至少两格。
+ */
+function checkStairNotBlockingDoor() {
+  console.log('\n=== 1d-3. 楼梯口不许堵在门口后面 ===');
+  const bad = [];
+  const upDists = [];
+  const downDists = [];
+  const D2 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  LEVELS.forEach((level, i) => {
+    const grid = getGrid(i);
+    const H = grid.length, W = grid[0].length;
+    const at = (x, y) => (x < 0 || y < 0 || y >= H || x >= W) ? null : grid[y][x];
+    const doors = [], upStairs = [], downStairs = [];
+    grid.forEach((row, y) => row.forEach((t, x) => {
+      if (t.t === 'door') doors.push({ x, y });
+      if (t.t === 'stairUp' || t.t === 'boss') upStairs.push({ x, y });
+      if (t.t === 'stairDown') downStairs.push({ x, y });
+    }));
+    const dist = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+
+    for (const st of upStairs) {
+      if (!doors.length) continue;
+      const near = doors.reduce((p, d) => (dist(d, st) < dist(p, st) ? d : p));
+      const d = dist(near, st);
+      upDists.push(d);
+      if (d < 2) bad.push('第 ' + (i + 1) + ' 层上楼梯 (' + st.x + ',' + st.y + ') 离门只有 ' + d + ' 格');
+      // 门正后方那一格（和楼梯同一侧）必须站着怪
+      const seen = new Set([st.x + ',' + st.y]);
+      const stack = [st];
+      while (stack.length) {
+        const c = stack.pop();
+        for (const [dx, dy] of D2) {
+          const nx = c.x + dx, ny = c.y + dy;
+          if (nx === near.x && ny === near.y) continue;      // 不穿门
+          const t = at(nx, ny);
+          if (!t || t.t === 'wall') continue;
+          const k = nx + ',' + ny;
+          if (seen.has(k)) continue;
+          seen.add(k); stack.push({ x: nx, y: ny });
+        }
+      }
+      let gate = null;
+      for (const [dx, dy] of D2) {
+        const nx = near.x + dx, ny = near.y + dy;
+        if (seen.has(nx + ',' + ny)) { gate = { x: nx, y: ny }; break; }
+      }
+      if (!gate) bad.push('第 ' + (i + 1) + ' 层上楼梯那间房找不到门内侧那一格');
+      else if (at(gate.x, gate.y).t !== 'monster') {
+        bad.push('第 ' + (i + 1) + ' 层门后 (' + gate.x + ',' + gate.y + ') 没站着怪，进门就没人拦');
+      }
+    }
+
+    for (const st of downStairs) {
+      if (!doors.length) continue;
+      const d = Math.min(...doors.map((dr) => dist(dr, st)));
+      downDists.push(d);
+      if (d < 2) bad.push('第 ' + (i + 1) + ' 层下楼梯 (' + st.x + ',' + st.y + ') 离门只有 ' + d + ' 格');
+    }
+  });
+  const fmt = (arr) => arr.length ? Math.min(...arr) + '~' + Math.max(...arr) : '无';
+  console.log('  上楼梯离最近的门洞：' + fmt(upDists) + ' 格');
+  console.log('  下楼梯离最近的门洞：' + fmt(downDists) + ' 格');
+  check('上下楼梯都不许堵在门口后面（离门至少两格，门后还得有怪守着）', bad.length === 0,
+    bad.slice(0, 6).join(' '));
 }
 
 /* ------------------------------------------------------------------ */
@@ -847,7 +924,15 @@ function checkStairLanding() {
       check('走到门口自动开门并站上去',
         r1.state.pos.x === door.x && r1.state.pos.y === door.y &&
         !!r1.state.openDoors['0:' + door.x + ',' + door.y]);
-      const r2 = step(r1.state, { type: 'MOVE', dir: dirTo(door, stairUp) });
+      // 上楼梯在门后房间的最深处，得往里走几步才踩得到
+      let r2 = r1;
+      const path = plan(r1.state, stairUp, new Set());
+      if (path) {
+        for (const p of path.path) {
+          const dx = p.x - r2.state.pos.x, dy = p.y - r2.state.pos.y;
+          r2 = step(r2.state, { type: 'MOVE', dir: DIR_NAME[dx + ',' + dy] });
+        }
+      }
       const land = r2.state.pos;
       const t2 = findCharInLevel(1, '<');
       const d2 = t2 ? Math.abs(land.x - t2.x) + Math.abs(land.y - t2.y) : -1;
@@ -1018,7 +1103,7 @@ function checkHealRules() {
     }
   }
 
-  // ② 推开魔王房的门：不再回血（没有"满"可回），直接开打
+  // ② 走到魔王跟前：不再回血（没有"满"可回），直接开打
   const boss = findCharInLevel(LEVELS.length - 1, 'X');
   check('第 30 层找得到魔王', !!boss);
   if (boss) {
@@ -1033,7 +1118,7 @@ function checkHealRules() {
     st.hp = TARGET.hp;
     st.atk = TARGET.atk; st.def = TARGET.def;
     const r = step(st, { type: 'MOVE', dir: dirTo(st.pos, boss) });
-    check('推开魔王房的门：不再回血，直接开打',
+    check('走到魔王跟前：不再回血，直接开打',
       r.state.hp === 11600 && !r.events.some((e) => e.text.includes('血量回到')),
       `进门 ${TARGET.hp} → 打完 ${r.state.hp}`);
     check('魔王战打 48 回合、挨 56400 点伤害后还剩 11600 血',
@@ -1565,6 +1650,26 @@ if (process.argv.includes('--emit')) {
   const out = process.cwd() + '/tools/solution.json';
   writeFileSync(out, JSON.stringify(route));
   console.log('\n  路线已导出：' + out + '（' + route.length + ' 步）');
+
+  // 顺带导出逐动作指纹：浏览器回放时每走一步就跟规则层对一次账，
+  // 对不上就说明表现层和规则层不是同一套结果。
+  const marks = [];
+  let s = createInitialState(findCharInLevel(0, '@'));
+  const fp = (st) => [st.level + 1, st.hp, st.atk, st.def, st.gold, st.steps, st.pos.x, st.pos.y].join('|');
+  marks.push(fp(s));
+  for (const a of route) {
+    if (a === 'esc') {
+      s = (s.status === 'inShop'
+        ? step(s, { type: 'CLOSE_SHOP' })
+        : step(s, { type: 'CLOSE_BOOK' })).state;
+    } else {
+      s = step(s, { type: 'MOVE', dir: a }).state;
+    }
+    marks.push(fp(s));
+  }
+  const fpOut = process.cwd() + '/tools/fingerprints.json';
+  writeFileSync(fpOut, JSON.stringify(marks));
+  console.log('  指纹已导出：' + fpOut + '（' + marks.length + ' 个对账点）');
 }
 
 console.log('');

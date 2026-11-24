@@ -10,7 +10,8 @@
  * 奖励与怪：
  *   5 间「上锁的房间」都在树梢上（彼此不相邻，门洞不会撞车），门口站着怪：
  *     守关怪守开门的钥匙、小鬼守生命结晶、史莱姆守商店 / 卷轴、小鬼守剑 / 盾。
- *   往上那级楼梯的房间，门洞上就是锁着的门，楼梯在门正后方一格。
+ *   往上那级楼梯的房间，门洞上就是锁着的门，楼梯在门后房间的最深处 ——
+ *     进房间先打怪，再踩楼梯升层，楼梯不会堵在门口后面。
  *   巡逻怪散在各个房间里，门洞留空 —— 路上不会出现「一格接一格全是怪」。
  *
  * 运行： node tools/gen-levels.mjs [随机种子]
@@ -281,6 +282,32 @@ function roomCenter(room) {
 }
 
 /**
+ * 房间里离 from 最远的那一格（同距时取离房间正中最近的那格）。
+ *
+ * 上楼梯要用它：楼梯不能堵在门口后面 ——
+ * 一进门就踩上楼梯的话，那间房里的怪一只都打不了，
+ * 玩家只能先升上去、再走下来才能清怪。
+ * 所以楼梯放在房间最深處，进门后先走一段、打掉路上的怪，再踩楼梯。
+ */
+function deepestCellInRoom(room, from) {
+  const cells = [];
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) {
+      cells.push({ x, y, d: Math.abs(x - from.x) + Math.abs(y - from.y) });
+    }
+  }
+  const maxD = Math.max(...cells.map((c) => c.d));
+  const far = cells.filter((c) => c.d === maxD);
+  const mid = roomCenter(room);
+  far.sort((a, b) => {
+    const da = Math.abs(a.x - mid.x) + Math.abs(a.y - mid.y);
+    const db = Math.abs(b.x - mid.x) + Math.abs(b.y - mid.y);
+    return da - db || (a.y - b.y) || (a.x - b.x);
+  });
+  return far[0];
+}
+
+/**
  * 根房间里放「往下那级楼梯」的格子。
  *
  * 门口正下方那一格不能放楼梯：楼梯是「踩上去就掉层」的格子，
@@ -294,6 +321,11 @@ function pickDownCell(map, room) {
   for (const d of map.roomDoors[room.id]) {
     const n = insideNeighbor(map, d, room.id);
     if (n) blocked.add(K(n.x, n.y));
+    // 门洞周围一格也不放楼梯：踩上去就换层，等于把门堵死
+    for (const [dx, dy] of DIRS) {
+      if (dx === 0 && dy === 0) continue;
+      blocked.add(K(d.x + dx, d.y + dy));
+    }
   }
   const cands = [];
   for (let y = room.y; y < room.y + room.h; y++) {
@@ -343,17 +375,29 @@ function tryPlace(map, plan) {
     return true;
   };
 
-  // 往上那级楼梯（末层是魔王）：门洞上是锁着的门，楼梯在门正后方
+  // 往上那级楼梯（末层是魔王）：门洞上是锁着的门，楼梯在门后房间的最深处
   const upDoors = roomDoors[upRoom];
   if (!upDoors.length) return fail('updoor');
   const upDoor = upDoors[0];
   const otherOfUp = upDoor.a === upRoom ? upDoor.b : upDoor.a;
-  const stairCell = insideNeighbor(map, upDoor, upRoom);
+  // 楼梯放在门后房间的最深处：进门先打怪，再踩楼梯升层
+  const stairCell = deepestCellInRoom(rooms[upRoom], upDoor);
   const outsideCell = insideNeighbor(map, upDoor, otherOfUp);
   if (!stairCell || !outsideCell) return fail('stair');
   put(stairCell, plan.isLast ? 'X' : '>');
   put(upDoor, DOOR_CHARS[plan.doorLock]);
   for (let i = 1; i < upDoors.length; i++) extraBlockers.push(upDoors[i]);
+
+  // 上楼那间房：门正后方一格必须站一只巡逻怪。
+  // 楼梯已经挪到房间最深处（不会一进门就升层），
+  // 但光「进得去」还不够 —— 得有一只怪挡在门口，
+  // 玩家清掉它才能往里走，房里的怪才真的打得了，不用上去再下来。
+  const upInner = insideNeighbor(map, upDoor, upRoom);
+  let forcedPatrol = 0;
+  if (upInner && !isTaken(upInner) && (upInner.x !== stairCell.x || upInner.y !== stairCell.y)) {
+    put(upInner, 'v');
+    forcedPatrol = 1;
+  }
 
   // 守关怪堵在钥匙房门口，钥匙在房间正中间
   if (!guard(keyRoom, 'G')) return fail('keydoor');
@@ -412,6 +456,9 @@ function tryPlace(map, plan) {
   const nearStair = (c) =>
     Math.abs(stairCell.x - c.x) + Math.abs(stairCell.y - c.y) <= 1 ||
     Math.abs(downCell.x - c.x) + Math.abs(downCell.y - c.y) <= 1;
+  // 门口那只强制怪的隔壁不能再站怪（两只怪不挨着）
+  const nearForced = (c) =>
+    forcedPatrol && Math.abs(c.x - upInner.x) + Math.abs(c.y - upInner.y) === 1;
 
   // 金币和备用钥匙：摊在房间的空地上
   const loose = [];
@@ -446,6 +493,7 @@ function tryPlace(map, plan) {
         if (onDoor(c)) continue;
         if (nearDoor(c)) continue;
         if (nearStair(c)) continue;
+        if (nearForced(c)) continue;
         cells.push(c);
       }
     }
@@ -455,7 +503,7 @@ function tryPlace(map, plan) {
     candidates.set(r.id, shuffled(same));
   }
 
-  const need = patrolCount(plan.floor) - extraBlockers.length;
+  const need = patrolCount(plan.floor) - extraBlockers.length - forcedPatrol;
   const roomOrder = shuffled(rooms.map((r) => r.id));
   const chosen = [];
   for (;;) {
