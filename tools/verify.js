@@ -260,8 +260,8 @@ function checkLevels() {
 
   // 地图宽固定 17，高随树的高度变（每层房间树深浅不一样）
   const badSize = LEVELS.map((l, i) => ({ l, i }))
-    .filter(({ l }) => l.rows[0].length !== 17 || l.rows.length < 14 || l.rows.length > 21);
-  check('30 层地图都是 17 宽，高 14~21', badSize.length === 0,
+    .filter(({ l }) => l.rows[0].length !== 17 || l.rows.length < 14 || l.rows.length > 30);
+  check('30 层地图都是 17 宽，高 14~30', badSize.length === 0,
     badSize.map(({ l, i }) => `第 ${i + 1} 层 ${l.rows.length}×${l.rows[0].length}`).join(' '));
 
   LEVELS.forEach((level, i) => {
@@ -486,7 +486,7 @@ function checkLevels() {
 function checkMapDensity() {
   console.log('\n=== 1d. 地图密度 ===');
 
-  const WALL_LIMIT = 0.70;   // 墙占比上限（路只留一格宽，墙自然多；实测最高 67.2%）
+  const WALL_LIMIT = 0.55;   // 墙占比上限（房间填满地盘之后实测最高 46% 上下）
   const MON_LIMIT = 28;      // 每层最少怪数（4 只看门怪 + 26 只巡逻怪）
   const ITEM_LIMIT = 6;      // 每层最少道具数（不含楼梯/门/怪）
 
@@ -673,7 +673,7 @@ function checkWarpRules() {
 
 
 /* ------------------------------------------------------------------ */
-/* 1d-2. 房间结构：9 间房，门洞连成一棵有分叉的树                          */
+/* 1d-2. 房间结构：10 间真房，门洞连成一棵有分叉的树                       */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -687,6 +687,7 @@ function checkRoomStructure() {
   const bad = [];
   const wide = [];
   const roomCounts = [];
+  const realCounts = [];
   const sizeMix = new Set();
   LEVELS.forEach((level, i) => {
     const grid = getGrid(i);
@@ -700,6 +701,8 @@ function checkRoomStructure() {
       }
     }
     roomCounts.push(L.rooms.length);
+    // 真房间：门洞碎片（1×1 / 2×1）不算房
+    realCounts.push(L.rooms.filter((room) => room.w >= 3 && room.h >= 2).length);
     for (const room of L.rooms) sizeMix.add(room.w + '×' + room.h);
 
     // 路只留一格宽：房间以外不允许出现 2×2 的空地
@@ -764,7 +767,8 @@ function checkRoomStructure() {
     wide.slice(0, 6).join(' '));
   check('房间大小不都是 3×3（大小不一的房间）', sizeMix.size >= 5,
     `出现过的尺寸：${[...sizeMix].sort().join(' ')}`);
-  check('每层至少 9 间房', roomCounts.every((n) => n >= 9), roomCounts.join(' '));
+  check('每层正好 10 间真房间（门洞碎片不算）', realCounts.every((n) => n === 10), realCounts.join(' '));
+  check('每层至少 9 个房间连通块（真房间 + 门洞碎片）', roomCounts.every((n) => n >= 9), roomCounts.join(' '));
 }
 
 /* ------------------------------------------------------------------ */

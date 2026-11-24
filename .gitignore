@@ -12,3 +12,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# README 表格生成物（node tools/readme-table.mjs --md）
+tools/readme-table30.md
+tools/readme-codex1.md

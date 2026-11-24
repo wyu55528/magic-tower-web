@@ -2,12 +2,13 @@
  * 30 层塔的关卡生成器。
  *
  * 地图结构：每层一张「树枝状」的楼层。
- *   房子 = 一间间小隔间（2~4 宽、2~3 高），上下左右都砌墙，只在墙上开一格门；
+ *   房子 = 一间间小隔间（4~5 宽、3~4 高），上下左右都砌墙，只在墙上开一格门；
+ *   底下一间 15 宽的树干大厅，往上 3 列、每列竖着摞 3 间，一共 10 间；
  *   路   = 只留一格宽的横向走廊，一层一层往上分叉，走廊尽头接着下一层的隔间。
  *   走廊行横着贯通整片树杈，隔间开在走廊边上 —— 所以全图没有两格宽的路。
  *
  * 竖着看，一层楼是这样码上去的（从下往上）：
- *   [树干隔间] [顶墙] [走廊行] [门洞行] [树枝隔间] [顶墙] [走廊行] [门洞行] [梢头隔间]
+ *   [树干大厅] [顶墙] [走廊行] [门洞行] [树枝隔间] [顶墙] [走廊行] [门洞行] [梢头隔间]
  *   每个房间只有一扇门（开在下墙），所以门永远不会撞车。
  *
  * 奖励与怪：
@@ -129,7 +130,17 @@ const CANVAS_W = 17;          // 画布宽度（两侧各留 1 郊外墙）
 const MAX_DEPTH = 3;          // 树干 → 树枝 → 小枝 → 梢头，一共四层房
 const SLOT_X0 = 1;
 const SLOT_X1 = CANVAS_W - 2;
-const MAX_H = 21;             // 画布最高这么多行，再高就重来
+const MAX_H = 30;             // 画布最高这么多行，再高就重来
+
+// 房间尺寸的调参（环境变量可以临时覆盖，方便扫参数）：
+//   SLOT_MIN  = 每个孩子分到的地盘至少这么宽
+//     —— 以前切到 2 格，房间碎成小盒子，四面砌墙反而比地多
+//   ROOM_W_MAX = 房间最宽多少格
+//   ROOM_H_MIN / ROOM_H_MAX = 房间高度区间
+const SLOT_MIN = Number(process.env.SLOT_MIN || 4);
+const ROOM_W_MAX = Number(process.env.ROOM_W_MAX || 6);
+const ROOM_H_MIN = Number(process.env.ROOM_H_MIN || 3);
+const ROOM_H_MAX = Number(process.env.ROOM_H_MAX || 4);
 
 /** 一个节点最多长几个孩子 */
 function maxKids(depth) {
@@ -149,18 +160,29 @@ function buildTree(rnd) {
     const id = nodes.length;
     const node = { id, parent: parentId, children: [], depth, x0, x1 };
     nodes.push(node);
-    if (depth >= MAX_DEPTH) {
-      const maxW = Math.min(4, x1 - x0 + 1);
-      node.w = 2 + Math.floor(rnd() * (maxW - 1));   // 隔间宽 2~4，但不能超出自己的地盘
-      node.h = 2 + Math.floor(rnd() * 2);           // 隔间高 2~3
+    const usable = x1 - x0 + 1;
+    // 地盘太窄就不横着切了：切下去只会切出 2 格的小盒子，墙比地还多。
+    // 改成竖着摞一个（同一块地盘往上盖），树还是四层。
+    if (usable < SLOT_MIN * 2 + 1) {
+      node.w = Math.min(usable, ROOM_W_MAX);
+      node.h = ROOM_H_MIN + Math.floor(rnd() * (ROOM_H_MAX - ROOM_H_MIN + 1));
+      if (depth < MAX_DEPTH) {
+        node.children.push(build(id, depth + 1, x0, x1));
+      }
       return id;
     }
-    const usable = x1 - x0 + 1;
-    // 每个孩子至少 2 格宽，中间还要留 1 格墙
-    const maxK = Math.max(1, Math.min(maxKids(depth), Math.floor((usable + 1) / 3)));
-    const k = 1 + Math.floor(rnd() * maxK);
-    let rest = usable - k * 2 - (k - 1);       // 还能多分的宽度
-    const widths = new Array(k).fill(2);
+    if (depth >= MAX_DEPTH) {
+      node.w = Math.min(usable, ROOM_W_MAX);
+      node.h = ROOM_H_MIN + Math.floor(rnd() * (ROOM_H_MAX - ROOM_H_MIN + 1));
+      return id;
+    }
+    // 孩子个数：让每个孩子的地盘落在 SLOT_MIN ~ SLOT_MIN+2 之间
+    const kMin = Math.max(1, Math.ceil((usable + 1) / (SLOT_MIN + 3)));
+    const kMax = Math.max(kMin, Math.floor((usable + 1) / (SLOT_MIN + 1)));
+    let k = Math.min(maxKids(depth), kMin + Math.floor(rnd() * (kMax - kMin + 1)));
+    k = Math.max(1, k);
+    let rest = usable - k * SLOT_MIN - (k - 1);   // 还能多分的宽度
+    const widths = new Array(k).fill(SLOT_MIN);
     for (let i = 0; i < rest; i++) widths[Math.floor(rnd() * k)]++;
     let cx = x0;
     for (let i = 0; i < k; i++) {
@@ -168,9 +190,8 @@ function buildTree(rnd) {
       node.children.push(childId);
       cx += widths[i] + 1;
     }
-    const maxW = Math.min(4, usable);
-    node.w = 2 + Math.floor(rnd() * (maxW - 1));
-    node.h = 2 + Math.floor(rnd() * 2);
+    node.w = Math.min(usable, ROOM_W_MAX);
+    node.h = ROOM_H_MIN + Math.floor(rnd() * (ROOM_H_MAX - ROOM_H_MIN + 1));
     return id;
   }
   build(-1, 0, SLOT_X0, SLOT_X1);
@@ -209,9 +230,12 @@ function assignRows(nodes) {
 function placeChambers(nodes, rnd) {
   for (const n of nodes) {
     const span = n.x1 - n.x0 + 1;
-    n.w = Math.max(2, Math.min(n.w, span));    // 房间不能超出自己的地盘
-    const jitter = Math.floor(rnd() * 3) - 1;
-    let cx0 = n.x0 + Math.floor((span - n.w) / 2) + jitter;
+    // 根隔间（树干）铺满自己的地盘：两侧不留废墙
+    n.w = n.parent < 0 ? span : Math.max(2, Math.min(n.w, span));
+    // 房间填满地盘时不抖；地盘比房间宽才左右挪一点
+    const slack = span - n.w;
+    const jitter = slack > 1 ? Math.floor(rnd() * 3) - 1 : 0;
+    let cx0 = n.x0 + Math.floor(slack / 2) + jitter;
     cx0 = Math.max(n.x0, Math.min(cx0, n.x1 - n.w + 1));
     n.cx0 = cx0;
     n.cx1 = cx0 + n.w - 1;
