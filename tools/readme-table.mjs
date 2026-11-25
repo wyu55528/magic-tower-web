@@ -39,7 +39,7 @@ for (const L of LEVELS) {
 }
 
 /** 捡到图鉴书那一刻的面板（参考路线第 86 个动作之后） */
-const BOOK_PANEL = { atk: 400, def: 50, hp: 1710 };
+const BOOK_PANEL = { atk: 400, def: 50, hp: 1415 };
 const legend1 = LEVELS[0].legend;
 const codex = [];
 for (const id of ['G', 'g', 'k', 'm', 'v', 'w', 'p', 'q', 'e', 'f'].map((c) => legend1[c])) {

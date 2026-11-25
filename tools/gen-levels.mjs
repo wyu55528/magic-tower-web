@@ -2,13 +2,13 @@
  * 30 层塔的关卡生成器。
  *
  * 地图结构：每层一张「树枝状」的楼层。
- *   房子 = 一间间小隔间（4~5 宽、3~4 高），上下左右都砌墙，只在墙上开一格门；
- *   底下一间 15 宽的树干大厅，往上 3 列、每列竖着摞 3 间，一共 10 间；
+ *   房子 = 一间间小隔间（3~4 宽、4 高），上下左右都砌墙，只在墙上开一格门；
+ *   底下一间 7 宽、2 高的入口厅，往上 3 列、每列竖着摞 3 间，一共 10 间；
  *   路   = 只留一格宽的横向走廊，一层一层往上分叉，走廊尽头接着下一层的隔间。
  *   走廊行横着贯通整片树杈，隔间开在走廊边上 —— 所以全图没有两格宽的路。
  *
  * 竖着看，一层楼是这样码上去的（从下往上）：
- *   [树干大厅] [顶墙] [走廊行] [门洞行] [树枝隔间] [顶墙] [走廊行] [门洞行] [梢头隔间]
+ *   [入口厅] [顶墙] [走廊行] [门洞行] [树枝隔间] [顶墙] [走廊行] [门洞行] [梢头隔间]
  *   每个房间只有一扇门（开在下墙），所以门永远不会撞车。
  *
  * 奖励与怪：
@@ -126,21 +126,26 @@ function shuffled(arr) {
 const DIRS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const K = (x, y) => x + ',' + y;
 
-const CANVAS_W = 17;          // 画布宽度（两侧各留 1 郊外墙）
-const MAX_DEPTH = 3;          // 树干 → 树枝 → 小枝 → 梢头，一共四层房
+const CANVAS_W = Number(process.env.CANVAS_W || 13);   // 画布宽度（两侧各留 1 郊外墙）
+const MAX_DEPTH = Number(process.env.MAX_DEPTH || 3);       // 树干 → 树枝 → 小枝 → 梢头，一共四层房
 const SLOT_X0 = 1;
 const SLOT_X1 = CANVAS_W - 2;
-const MAX_H = 30;             // 画布最高这么多行，再高就重来
+const MAX_H = Number(process.env.MAX_H || 30);               // 画布最高这么多行，再高就重来
 
 // 房间尺寸的调参（环境变量可以临时覆盖，方便扫参数）：
 //   SLOT_MIN  = 每个孩子分到的地盘至少这么宽
-//     —— 以前切到 2 格，房间碎成小盒子，四面砌墙反而比地多
+//     —— 切太碎房间就碎成小盒子，四面砌墙反而比地多
 //   ROOM_W_MAX = 房间最宽多少格
 //   ROOM_H_MIN / ROOM_H_MAX = 房间高度区间
-const SLOT_MIN = Number(process.env.SLOT_MIN || 4);
-const ROOM_W_MAX = Number(process.env.ROOM_W_MAX || 6);
-const ROOM_H_MIN = Number(process.env.ROOM_H_MIN || 3);
+//   ROOT_W_MAX / ROOT_H_MAX = 底部入口厅最宽 / 最高多少格
+//     —— 入口厅铺满整条底边会变成一整条空荡的带子，所以收窄压矮
+//   CANVAS_W / MAX_DEPTH / MAX_H = 画布宽度、房间层数、画布最高行数
+const SLOT_MIN = Number(process.env.SLOT_MIN || 3);
+const ROOM_W_MAX = Number(process.env.ROOM_W_MAX || 4);
+const ROOM_H_MIN = Number(process.env.ROOM_H_MIN || 4);
 const ROOM_H_MAX = Number(process.env.ROOM_H_MAX || 4);
+const ROOT_W_MAX = Number(process.env.ROOT_W_MAX || 7);
+const ROOT_H_MAX = Number(process.env.ROOT_H_MAX || 2);
 
 /** 一个节点最多长几个孩子 */
 function maxKids(depth) {
@@ -204,6 +209,8 @@ function buildTree(rnd) {
  *   hubY    = 隔间顶上面那一行，1 格宽的走廊，横着贯通整片树杈
  */
 function assignRows(nodes) {
+  // 底部大厅的高度在这里压：行高是这步算的，晚了就来不及
+  for (const n of nodes) if (n.parent < 0 && ROOT_H_MAX > 0) n.h = Math.min(n.h, ROOT_H_MAX);
   const place = (node, bottomY) => {
     node.bottomY = bottomY;
     node.chamberY1 = bottomY - 1;
@@ -231,7 +238,9 @@ function placeChambers(nodes, rnd) {
   for (const n of nodes) {
     const span = n.x1 - n.x0 + 1;
     // 根隔间（树干）铺满自己的地盘：两侧不留废墙
-    n.w = n.parent < 0 ? span : Math.max(2, Math.min(n.w, span));
+    //   ROOT_W_MAX > 0 时收窄成一个小厅，避免底部出现一整条空荡的大厅
+    const rootW = ROOT_W_MAX > 0 ? Math.min(span, ROOT_W_MAX) : span;
+    n.w = n.parent < 0 ? rootW : Math.max(2, Math.min(n.w, span));
     // 房间填满地盘时不抖；地盘比房间宽才左右挪一点
     const slack = span - n.w;
     const jitter = slack > 1 ? Math.floor(rnd() * 3) - 1 : 0;
@@ -695,9 +704,12 @@ function main() {
     const m = measure(ok.rows);
     m.rooms = ok.nodes.length;
     m.size = ok.rows.length + '×' + ok.rows[0].length;
+    // 最大的一间房：入口厅要是铺满整条底边，这里就会变成一个空荡的大盒子
+    m.maxRoom = Math.max(...ok.nodes.map((n) => n.w * n.h));
     stats.push(m);
   }
 
+  const dry = process.argv.includes('--dry');   // 只算不写：调参数时用
   const src = readFileSync(LEVELS_FILE, 'utf8');
   const bi = src.indexOf(BEGIN);
   const ei = src.indexOf(END);
@@ -706,7 +718,7 @@ function main() {
     process.exit(1);
   }
   const next = src.slice(0, bi + BEGIN.length) + '\n' + emit(placed) + '\n' + src.slice(ei);
-  writeFileSync(LEVELS_FILE, next, 'utf8');
+  if (!dry) writeFileSync(LEVELS_FILE, next, 'utf8');
 
   const sum = (key) => stats.reduce((n, s) => n + s[key], 0);
   const avg = (key) => (sum(key) / FLOOR_COUNT).toFixed(1);
@@ -716,13 +728,14 @@ function main() {
     '%，平均每层空地 ' + avg('open') + ' 格');
   console.log('平均每层怪 ' + avg('mons') + ' 只，挨着的怪对数 ' + sum('adjacent') + '（必须是 0）');
   console.log('平均每层 2×2 空地 ' + avg('openSquares') + ' 处（房间内部才有）、岔口 ' + avg('junction') + ' 个');
+  console.log('最大的一间房 ' + Math.max(...stats.map((s) => s.maxRoom)) + ' 格（入口厅别太大）');
   if (process.argv.includes('--print')) {
     for (const i of [0, 1, 2]) {
       console.log('\n第 ' + (i + 1) + ' 层（' + stats[i].rooms + ' 间房）：');
       placed[i].rows.forEach((r) => console.log('  ' + r.join('')));
     }
   }
-  console.log('已写入 ' + LEVELS_FILE);
+  console.log(dry ? '（--dry：只算没写文件）' : '已写入 ' + LEVELS_FILE);
 }
 
 export { buildTree, assignRows, placeChambers, carve, tryPlace, planOf, measure, pickSpecialRooms };
